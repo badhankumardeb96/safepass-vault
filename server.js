@@ -97,11 +97,11 @@ app.get('/health', (req, res) => {
 });
 
 // ==========================================
-// Serve Static Files (Updated: 'www' removed)
+// Serve Static Files (Updated to point to 'www' folder)
 // ==========================================
-app.use(express.static(path.join(__dirname)));
-app.use('/admin', express.static(path.join(__dirname, 'safepass-vault-admin')));
-app.use(express.static(path.join(__dirname, 'safepass-vault-admin')));
+app.use(express.static(path.join(__dirname, 'www')));
+app.use('/admin', express.static(path.join(__dirname, 'www', 'safepass-vault-admin')));
+app.use(express.static(path.join(__dirname, 'www', 'safepass-vault-admin')));
 
 // 10-Digit Unique User ID Generator
 const generate10DigitId = () => {
@@ -109,35 +109,35 @@ const generate10DigitId = () => {
 };
 
 // -----------------------------------------------------------------------------
-// HTML Page Routes (Reading directly from root directory)
+// HTML Page Routes (Reading from 'www' directory)
 // -----------------------------------------------------------------------------
 
 app.get('/', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  res.sendFile(path.join(__dirname, 'www', 'index.html'));
 });
 
 app.get('/login.html', (req, res) => {
-  res.sendFile(path.join(__dirname, 'index.html'));
+  res.sendFile(path.join(__dirname, 'www', 'index.html'));
 });
 
 app.get('/register.html', (req, res) => {
-  res.sendFile(path.join(__dirname, 'register.html'));
+  res.sendFile(path.join(__dirname, 'www', 'register.html'));
 });
 
 app.get('/dashboard.html', (req, res) => {
-  res.sendFile(path.join(__dirname, 'dashboard.html'));
+  res.sendFile(path.join(__dirname, 'www', 'dashboard.html'));
 });
 
 app.get('/user.html', (req, res) => {
-  res.sendFile(path.join(__dirname, 'user.html'));
+  res.sendFile(path.join(__dirname, 'www', 'user.html'));
 });
 
 app.get('/admin.html', (req, res) => {
-  res.sendFile(path.join(__dirname, 'safepass-vault-admin', 'admin.html'));
+  res.sendFile(path.join(__dirname, 'www', 'safepass-vault-admin', 'admin.html'));
 });
 
 app.get('/admin-login.html', (req, res) => {
-  res.sendFile(path.join(__dirname, 'safepass-vault-admin', 'admin-login.html'));
+  res.sendFile(path.join(__dirname, 'www', 'safepass-vault-admin', 'admin-login.html'));
 });
 
 // -----------------------------------------------------------------------------
