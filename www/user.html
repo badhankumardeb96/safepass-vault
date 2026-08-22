@@ -23,9 +23,16 @@
         <i class="fa-solid fa-arrow-left me-2"></i>Back to Admin Panel
       </a>
       <h5 class="m-0 font-weight-bold text-white d-none d-md-block">User Details & Control Panel</h5>
-      <div class="d-flex align-items-center gap-2">
-        <span class="live-pulse"></span>
-        <span class="small text-muted">Live Sync Active</span>
+      <div class="d-flex align-items-center">
+        <!-- Live Sync Indicator with ID for JS Control -->
+        <div id="liveSyncIndicator" class="live-sync-badge online">
+          <div class="live-sync-dots">
+            <span class="dot dot-1"></span>
+            <span class="dot dot-2"></span>
+            <span class="dot dot-3"></span>
+          </div>
+          <span class="sync-text">Live Sync Active</span>
+        </div>
       </div>
     </div>
   </nav>
@@ -42,7 +49,7 @@
         </div>
         <div class="col">
           <h3 class="m-0 fw-bold text-white" id="displayUserName">Loading...</h3>
-          <p class="text-muted m-0">User ID: <span class="badge bg-primary fs-6 ms-1" id="displayUserId">----</span></p>
+          <p class="text-white m-0" style="color: #ffffff !important;">User ID: <span class="badge bg-primary fs-6 ms-1" id="displayUserId">----</span></p>
         </div>
         <div class="col-md-auto ms-auto">
           <label class="info-label d-block mb-1">Account Status</label>
@@ -90,7 +97,10 @@
             </div>
             <div class="col-12">
               <span class="info-label">Address</span>
-              <div class="info-value" id="infoAddress">N/A</div>
+              <div class="info-value" id="infoAddress">
+                <div style="margin-bottom: 6px;"><strong style="color: #94a3b8; font-size: 12px; display: block; letter-spacing: 0.5px;">PRESENT ADDRESS</strong><span style="color: #ffffff; font-size: 15px;" id="infoPresentAddress">N/A</span></div>
+                <div><strong style="color: #94a3b8; font-size: 12px; display: block; letter-spacing: 0.5px; margin-top: 8px;">PERMANENT ADDRESS</strong><span style="color: #ffffff; font-size: 15px;" id="infoPermanentAddress">N/A</span></div>
+              </div>
             </div>
           </div>
         </div>

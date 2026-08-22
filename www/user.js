@@ -1,5 +1,5 @@
 /* ==========================================================================
-    User Details & Admin Control Logic (user.js) - Vault Grid Fix
+    User Details & Admin Control Logic (user.js) - Clean Address & Extra Info Fix
     ========================================================================== */
 
 // Supabase Configuration
@@ -49,11 +49,14 @@ document.addEventListener("DOMContentLoaded", () => {
             loadUserDetails(true);
         }
     }, 2000);
+
+    // ৬. পেজ লোডের সময় নেটওয়ার্ক স্ট্যাটাস চেক
+    updateNetworkStatusIndicator(navigator.onLine);
 });
 
 /* ==========================================================================
-   Setup Event Listeners
-   ========================================================================== */
+    Setup Event Listeners
+    ========================================================================== */
 function setupEventListeners() {
     const statusElem = document.getElementById("statusSelect") || document.getElementById("userStatusSelect");
     if (statusElem) {
@@ -72,13 +75,12 @@ function setupEventListeners() {
 }
 
 /* ==========================================================================
-   Load User Information & Vault Records
-   ========================================================================== */
+    Load User Information & Vault Records
+    ========================================================================== */
 async function loadUserDetails(isSilent = false) {
     try {
         let allUsers = [];
 
-        // ১. Supabase থেকে ইউজার আনা
         if (supabaseClient) {
             const { data, error } = await supabaseClient.from('users').select('*');
             if (!error && data) {
@@ -86,7 +88,6 @@ async function loadUserDetails(isSilent = false) {
             }
         }
 
-        // ২. LocalStorage চেক করা
         if (allUsers.length === 0) {
             const localDataKeys = ['app_users_db', 'users', 'admin_users', 'all_users', 'registered_users', 'registeredUsers', 'safePassUser'];
             for (let key of localDataKeys) {
@@ -106,7 +107,6 @@ async function loadUserDetails(isSilent = false) {
 
         const targetCleanId = String(currentUserId).trim();
         
-        // ইউজার ম্যাচ করা
         userData = allUsers.find(u => {
             const uId = String(u.userId || u.id || '').trim();
             const uNid = String(u.nidNumber || u.nid || '').trim();
@@ -124,9 +124,7 @@ async function loadUserDetails(isSilent = false) {
             };
         }
 
-        // ৩. LocalStorage এবং Supabase থেকে সব সম্ভাব্য ভল্ট ডেটা সংগ্রহ করা
         let rawVaultData = [];
-
         const localVaultKeys = [
             'vault_records', 'user_vaults', 'vaults', 'saved_vaults', 
             'vault_data', 'passwords', 'user_vault_records', 'vaultList', 
@@ -149,7 +147,6 @@ async function loadUserDetails(isSilent = false) {
             }
         }
 
-        // Supabase থেকে ভল্ট টেবিল চেক করা
         if (supabaseClient) {
             const possibleTableNames = ['credentials', 'vault', 'vaults', 'vault_records', 'user_vaults'];
             for (let tName of possibleTableNames) {
@@ -167,7 +164,6 @@ async function loadUserDetails(isSilent = false) {
             }
         }
 
-        // ডুপ্লিকেট দূর করার জন্য ইউনিক ফিল্টার (Unique Filter by ID, platform & identifier)
         const uniqueVaultMap = new Map();
         rawVaultData.forEach(item => {
             const uniqueKey = item.id || `${item.platform || item.service || 'p'}_${item.identifier || item.username || item.email || 'u'}_${item.password || item.secret || 's'}`;
@@ -190,32 +186,58 @@ async function loadUserDetails(isSilent = false) {
 }
 
 /* ==========================================================================
-   Render User Information to UI
-   ========================================================================== */
+    Render User Information to UI
+    ========================================================================== */
 function renderUserInfo(user) {
     if (!user) return;
 
-    // Display Name & User ID
     const nameElem = document.getElementById("userNameDisplay") || document.getElementById("displayUserName");
-    if (nameElem) nameElem.innerText = user.fullName || user.userName || user.name || user.username || "User " + currentUserId;
+    if (nameElem) {
+        nameElem.innerText = user.fullName || user.userName || user.name || user.username || "User " + currentUserId;
+        nameElem.style.color = "#ffffff";
+        nameElem.style.textShadow = "0 2px 4px rgba(0,0,0,0.5)";
+    }
 
     const idElem = document.getElementById("userIdDisplay") || document.getElementById("displayUserId");
-    if (idElem) idElem.innerText = user.userId || user.nidNumber || user.id || currentUserId;
+    if (idElem) {
+        idElem.innerText = user.userId || user.nidNumber || user.id || currentUserId;
+        idElem.style.fontSize = "22px";
+        idElem.style.padding = "4px 12px";
+        idElem.style.letterSpacing = "1.2px";
+        idElem.style.color = "#ffffff";
+        idElem.style.fontWeight = "800";
+    }
 
-    // Status Dropdown
+    const deleteAccBtn = document.getElementById("deleteAccountBtn");
+    if (deleteAccBtn) {
+        deleteAccBtn.style.background = "linear-gradient(135deg, #dc2626 0%, #991b1b 100%)";
+        deleteAccBtn.style.color = "#ffffff";
+        deleteAccBtn.style.border = "none";
+        deleteAccBtn.style.fontWeight = "700";
+        deleteAccBtn.style.boxShadow = "0 4px 12px rgba(220, 38, 38, 0.4)";
+
+        const parentCard = deleteAccBtn.closest('.p-4, .card, div');
+        if (parentCard) {
+            parentCard.style.background = "linear-gradient(135deg, #1f1b24 0%, #111827 100%)";
+            parentCard.style.border = "1px solid #7f1d1d";
+        }
+    }
+
     const statusElem = document.getElementById("statusSelect") || document.getElementById("userStatusSelect");
     if (statusElem && document.activeElement !== statusElem) {
         statusElem.value = (user.status || "active").toLowerCase();
     }
 
-    // Personal Info Fields
     const nidVal = user.nidNumber || user.nid || user.nidNo || user.nationalId || user.nid_number || "N/A";
     const emailVal = user.email || user.userEmail || user.mail || user.emailAddress || "N/A";
     const phoneVal = user.phoneNumber || user.phone || user.mobile || user.contact || user.phone_number || "N/A";
     const genderVal = user.gender || user.sex || "N/A";
     const dobVal = user.dob || user.dateOfBirth || user.birthDate || user.birthday || user.date_of_birth || "N/A";
     const bloodVal = user.bloodGroup || user.blood || user.bg || user.blood_group || "N/A";
-    const addressVal = user.address || user.presentAddress || user.fullAddress || user.location || user.city || user.permanentAddress || "N/A";
+    
+    // প্রেজেন্ট এবং পার্মানেন্ট অ্যাড্রেস আলাদাভাবে ফেচ করা
+    const presentAddr = user.presentAddress || user.address || user.location || user.city || "N/A";
+    const permanentAddr = user.permanentAddress || user.perAddress || user.permanent_address || presentAddr;
 
     if (document.getElementById("infoNid")) document.getElementById("infoNid").innerText = nidVal;
     if (document.getElementById("infoEmail")) document.getElementById("infoEmail").innerText = emailVal;
@@ -223,54 +245,73 @@ function renderUserInfo(user) {
     if (document.getElementById("infoGender")) document.getElementById("infoGender").innerText = genderVal;
     if (document.getElementById("infoDob")) document.getElementById("infoDob").innerText = dobVal;
     if (document.getElementById("infoBlood")) document.getElementById("infoBlood").innerText = bloodVal;
-    if (document.getElementById("infoAddress")) document.getElementById("infoAddress").innerText = addressVal;
+    
+    // প্রেজেন্ট ও পার্মানেন্ট অ্যাড্রেসের জন্য আলাদা এলিমেন্ট আপডেট
+    if (document.getElementById("infoPresentAddress")) {
+        document.getElementById("infoPresentAddress").innerText = presentAddr;
+    }
+    if (document.getElementById("infoPermanentAddress")) {
+        document.getElementById("infoPermanentAddress").innerText = permanentAddr;
+    }
+    
+    const singleAddressElem = document.getElementById("infoAddress");
+    if (singleAddressElem && !document.getElementById("infoPresentAddress")) {
+        singleAddressElem.innerHTML = `
+            <div style="margin-bottom: 6px;"><strong style="color: #94a3b8; font-size: 12px; display: block; letter-spacing: 0.5px;">PRESENT ADDRESS</strong><span style="color: #ffffff; font-size: 15px;">${presentAddr}</span></div>
+            <div><strong style="color: #94a3b8; font-size: 12px; display: block; letter-spacing: 0.5px; margin-top: 8px;">PERMANENT ADDRESS</strong><span style="color: #ffffff; font-size: 15px;">${permanentAddr}</span></div>
+        `;
+    }
 
-    // Password Display
     let displayPass = user.plainPassword || user.rawPassword || user.password || user.pass || user.userPassword || "";
     const passInput = document.getElementById("currentPasswordInput");
     if (passInput && document.activeElement !== passInput) {
         passInput.value = displayPass;
     }
 
-    // Vault Items Render
     const vaultContainer = document.getElementById("userVaultContainer") || 
                            document.getElementById("vaultCardsGrid") || 
                            document.getElementById("vaultRecordsContainer") ||
                            document.querySelector(".vault-records-section");
                            
-    if (!vaultContainer) {
-        console.error("❌ Vault Container element not found in HTML!");
-        return;
-    }
+    if (!vaultContainer) return;
 
     vaultContainer.innerHTML = "";
     let records = user.vaultRecords || user.vaultData || [];
 
     if (!records || records.length === 0) {
-        vaultContainer.innerHTML = `<div class="col-12 text-muted text-center py-3">No saved vault records found for this user.</div>`;
+        vaultContainer.innerHTML = `<div class="col-12 text-light text-center py-4 fs-5">No saved vault records found for this user.</div>`;
     } else {
         records.forEach((item) => {
-            const category = item.category || item.type || 'SOCIAL MEDIA';
-            const platform = item.platform || item.service || item.accountType || item.title || item.siteName || 'Platform';
+            const category = item.category || item.type || 'BANKING & FINANCIAL';
+            const platform = item.platform || item.service || item.accountType || item.title || item.siteName || 'Pubali Bank';
             const holder = item.holderName || item.holder || item.accountHolder || '';
             const username = item.identifier || item.username || item.email || item.phone || item.user || 'N/A';
             const pass = item.secret || item.password || item.pin || item.pass || '••••••••';
+            
+            const extra = item.extraDetail || item.extra || item.extraField || item.additional || item.branch || item.cvv || item.extraInfo || item.subInfo || item.accNo || item.accountNumber || item.routingNumber || item.extra_info || '';
             const notes = item.notes || item.securityNotes || '';
 
             const card = document.createElement("div");
-            card.className = "col-md-4 col-sm-6 mb-3";
+            card.className = "col-md-4 col-sm-6 mb-4";
 
             card.innerHTML = `
-                <div class="p-3 border border-secondary rounded text-light shadow-sm h-100" style="background-color: #1e293b !important;">
-                    <div style="font-size: 11px; font-weight: bold; color: #3b82f6; text-transform: uppercase; margin-bottom: 5px;">${category}</div>
-                    <div class="d-flex align-items-center mb-2">
-                        <i class="fa-solid fa-shield-halved text-info me-2"></i>
-                        <h6 class="text-info fw-bold m-0">${platform}</h6>
+                <div class="p-4 rounded shadow-lg h-100" style="background: #111827 !important; border: 1px solid #374151 !important; color: #ffffff;">
+                    <div style="font-size: 12px; font-weight: 700; color: #38bdf8; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px;">${category}</div>
+                    <div class="d-flex align-items-center mb-3">
+                        <i class="fa-solid fa-shield-halved text-info fa-lg me-2"></i>
+                        <h5 class="text-white fw-bold m-0" style="font-size: 17px;">${platform}</h5>
                     </div>
-                    ${holder ? `<p class="mb-1 small text-muted"><strong>Holder:</strong> ${holder}</p>` : ''}
-                    <p class="mb-1 text-truncate" style="color: #f8fafc;"><strong>Identifier:</strong> ${username}</p>
-                    <p class="mb-1 small" style="color: #cbd5e1;"><strong>Password/PIN:</strong> <span style="font-family: monospace; background: rgba(15, 23, 42, 0.8); padding: 2px 6px; border-radius: 4px; color: #f59e0b;">${pass}</span></p>
-                    ${notes ? `<p class="mb-0 text-muted small mt-2 border-top border-secondary pt-1"><strong>Notes:</strong> ${notes}</p>` : ''}
+                    ${holder ? `<p class="mb-2 text-light" style="font-size: 14px;"><strong>Holder:</strong> <span style="color: #e2e8f0;">${holder}</span></p>` : ''}
+                    <p class="mb-2 text-light" style="font-size: 14px;"><strong>Identifier:</strong> <span style="color: #f1f5f9; font-weight: 500;">${username}</span></p>
+                    ${extra ? `<p class="mb-2 text-light" style="font-size: 14px;"><strong>Extra:</strong> <span style="color: #38bdf8; font-weight: 600; background: #1e293b; padding: 2px 8px; border-radius: 4px; border: 1px solid #334155;">${extra}</span></p>` : ''}
+                    
+                    <!-- এখানে justify-content-between সরিয়ে স্বাভাবিক করা হয়েছে যাতে পাসওয়ার্ড ও পিন কাছাকাছি দেখায় -->
+                    <p class="mb-2 text-light" style="font-size: 14px;">
+                        <strong>Password/PIN:</strong> 
+                        <span style="font-family: monospace; background: #1f2937; padding: 3px 10px; border-radius: 4px; color: #fbbf24; font-weight: bold; border: 1px solid #4b5563; margin-left: 8px;">${pass}</span>
+                    </p>
+
+                    ${notes ? `<p class="mb-0 text-light pt-2 mt-2" style="font-size: 13.5px; border-top: 1px dashed #374151;"><strong>Notes:</strong> <span style="color: #9ca3af;">${notes}</span></p>` : ''}
                 </div>
             `;
             vaultContainer.appendChild(card);
@@ -279,8 +320,8 @@ function renderUserInfo(user) {
 }
 
 /* ==========================================================================
-   Update User Status
-   ========================================================================== */
+    Update User Status
+    ========================================================================== */
 async function updateUserStatus() {
     const statusElem = document.getElementById("statusSelect") || document.getElementById("userStatusSelect");
     if (!statusElem) return;
@@ -307,10 +348,10 @@ async function updateUserStatus() {
 }
 
 /* ==========================================================================
-   Update User Password
-   ========================================================================== */
+    Update User Password
+    ========================================================================== */
 async function updatePassword() {
-    const inputElem = document.getElementById("newPasswordInput");
+    const inputElem = document.getElementById("newPasswordInput") || document.getElementById("setNewPasswordInput");
     if (!inputElem) return;
 
     const newPass = inputElem.value.trim();
@@ -345,8 +386,8 @@ async function updatePassword() {
 }
 
 /* ==========================================================================
-   Delete Account Permanently
-   ========================================================================== */
+    Delete Account Permanently
+    ========================================================================== */
 async function deleteAccount() {
     if (confirm("Are you sure you want to permanently delete this user account?")) {
         try {
@@ -371,8 +412,8 @@ async function deleteAccount() {
 }
 
 /* ==========================================================================
-   Supabase Real-Time Live Sync Integration
-   ========================================================================== */
+    Supabase Real-Time Live Sync Integration
+    ========================================================================== */
 function initSupabaseRealtime() {
     if (!supabaseClient) return;
 
@@ -396,12 +437,18 @@ function initSupabaseRealtime() {
         .on('postgres_changes', { event: '*', schema: 'public', table: 'vault' }, () => { loadUserDetails(); })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'vaults' }, () => { loadUserDetails(); })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'vault_records' }, () => { loadUserDetails(); })
-        .subscribe();
+        .subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                updateNetworkStatusIndicator(true);
+            } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+                updateNetworkStatusIndicator(false);
+            }
+        });
 }
 
 /* ==========================================================================
-   Custom Flash Popup Notification System
-   ========================================================================== */
+    Custom Flash Popup & Live Sync Indicator
+    ========================================================================== */
 function injectNotificationStyles() {
     if (document.getElementById('flashPopupStyles')) return;
     const style = document.createElement('style');
@@ -455,3 +502,38 @@ function showFlashPopup(message, type = 'success') {
     `;
     document.body.appendChild(overlay);
 }
+
+window.addEventListener('online', () => { updateNetworkStatusIndicator(true); });
+window.addEventListener('offline', () => { updateNetworkStatusIndicator(false); });
+
+function updateNetworkStatusIndicator(isOnline) {
+    let indicator = document.getElementById('liveSyncIndicator') || document.querySelector('.live-sync-badge');
+    
+    if (indicator) {
+        if (isOnline && navigator.onLine) {
+            indicator.className = "live-sync-badge online";
+            indicator.innerHTML = `
+                <div class="live-sync-dots">
+                    <span class="dot dot-1"></span>
+                    <span class="dot dot-2"></span>
+                    <span class="dot dot-3"></span>
+                </div>
+                <span class="sync-text">Live Sync Active</span>
+            `;
+        } else {
+            indicator.className = "live-sync-badge offline";
+            indicator.innerHTML = `
+                <div class="live-sync-dots">
+                    <span class="dot dot-1"></span>
+                    <span class="dot dot-2"></span>
+                    <span class="dot dot-3"></span>
+                </div>
+                <span class="sync-text">Slow / Disconnected</span>
+            `;
+        }
+    }
+}
+
+setInterval(() => {
+    updateNetworkStatusIndicator(navigator.onLine);
+}, 2000);
