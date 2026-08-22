@@ -219,9 +219,10 @@ span.text-muted {
   opacity: 1 !important;
 }
 
+/* ইউজার আইডি নাম্বার পুরোপুরি সাদা করার জন্য কালার `#ffffff` করা হলো */
 #userIdDisplay, 
 #displayUserId {
-  color: var(--accent-blue) !important;
+  color: #ffffff !important;
   font-weight: bold;
 }
 
@@ -332,12 +333,10 @@ textarea::placeholder,
   letter-spacing: 1px;
 }
 
-/* ভল্ট কার্ডের ভেতরে থাকা প্রতিটি প্যারাগ্রাফের মার্জিন কমিয়ে কাছাকাছি করা */
 .vault-card p {
   margin-bottom: 8px !important;
 }
 
-/* পাসওয়ার্ড/পিন সেকশনটি অন্য ফিল্ডগুলোর মতো কাছাকাছি ও সুন্দরভাবে সেট করা */
 .vault-card p.d-flex,
 .vault-card .d-flex.align-items-center.justify-content-between {
   margin-top: 4px !important;
@@ -370,5 +369,24 @@ textarea::placeholder,
     width: 100%;
     margin-bottom: 10px;
   }
-}
 
+  .glass-card:nth-of-type(2) {
+    display: flex !important;
+    flex-wrap: wrap !important;
+    justify-content: space-between !important;
+    gap: 12px !important;
+  }
+
+  .glass-card:nth-of-type(2) > h3,
+  .glass-card:nth-of-type(2) > div:first-child:not(.row) {
+    flex: 0 0 100% !important;
+    max-width: 100% !important;
+  }
+
+  .glass-card:nth-of-type(2) > div,
+  .glass-card:nth-of-type(2) > p {
+    flex: 0 0 calc(50% - 6px) !important;
+    max-width: calc(50% - 6px) !important;
+    margin-bottom: 8px !important;
+  }
+}
