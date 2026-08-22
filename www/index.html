@@ -9,16 +9,39 @@
     <!-- Supabase JS Client Library CDN -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 
-    <!-- Offline & Tower Animation CSS -->
+    <!-- Offline & Custom Loader Animation CSS -->
     <style>
         @keyframes pulse {
             0% { transform: scale(0.95); opacity: 0.7; }
             50% { transform: scale(1.05); opacity: 1; }
             100% { transform: scale(0.95); opacity: 0.7; }
         }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 </head>
 <body>
+
+<!-- Custom Application Loading Screen (Video Logo & Bottom Loading) -->
+<div id="appLoader" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: #070b19; display: flex; flex-direction: column; justify-content: space-between; align-items: center; z-index: 999999; padding: 40px 20px; box-sizing: border-box; transition: opacity 0.5s ease;">
+    
+    <!-- Top Spacer for balance -->
+    <div></div>
+
+    <!-- Center Video Logo (Professional & Responsive) -->
+    <div style="display: flex; justify-content: center; align-items: center; width: 100%;">
+        <video id="introVideo" src="safepass_vault_mobile_intro.mp4" autoplay muted playsinline style="max-width: 260px; width: 100%; height: auto; border-radius: 16px; object-fit: contain; box-shadow: 0 10px 30px rgba(0,0,0,0.5);"></video>
+    </div>
+
+    <!-- Bottom Section: Spinner & Application Loading Text -->
+    <div style="display: flex; flex-direction: column; align-items: center; gap: 12px; margin-bottom: 10px;">
+        <div style="width: 40px; height: 40px; border: 4px solid rgba(56, 189, 248, 0.2); border-top: 4px solid #38bdf8; border-radius: 50%; animation: spin 0.8s linear infinite;"></div>
+        <h3 style="color: #ffffff; font-family: 'Segoe UI', sans-serif; font-weight: 600; font-size: 16px; letter-spacing: 2px; text-transform: uppercase; margin: 0;">APPLICATION LOADING</h3>
+    </div>
+
+</div>
 
 <div class="login-container">
     <div class="brand-header">
@@ -119,15 +142,61 @@
 <!-- JavaScript Files -->
 <script src="script.js"></script>
 
-<!-- Internet Status Checker Script -->
+<!-- Loader & Internet Status Checker Script -->
 <script>
-    function checkConnection() {
-        if (navigator.onLine) {
-            document.getElementById('offline-screen').style.display = 'none';
-            window.location.reload();
+    let pageFullyLoaded = false;
+    let videoCompletedOnce = false;
+    const video = document.getElementById('introVideo');
+    const appLoader = document.getElementById('appLoader');
+
+    // ভিডিও শেষ হলে আবার প্রথম থেকে শুরু করার লজিক (Loop)
+    video.addEventListener('ended', function() {
+        videoCompletedOnce = true;
+        // যদি পেজ লোড হওয়া শেষ হয়ে থাকে, তবে প্রথমবার ভিডিও শেষ হওয়ামাত্রই লোডার সরিয়ে ফেলবে
+        if (pageFullyLoaded) {
+            hideLoader();
         } else {
-            alert('Still no internet connection! Please check your Wi-Fi or Mobile Data.');
+            // সার্ভার থেকে রেসপন্স না আসলে ভিডিও আবার প্লে হবে
+            video.currentTime = 0;
+            video.play();
         }
+    });
+
+    // পেজ বা রেন্ডার সার্ভার রেসপন্স করা মাত্র এই ফাংশনটি কল হবে
+    window.addEventListener('load', function() {
+        pageFullyLoaded = true;
+        // ভিডিওটি অন্তত একবার ৬ সেকেন্ড সম্পূর্ণ হওয়ার পর লোডার সরাবে
+        if (video.ended || videoCompletedOnce) {
+            hideLoader();
+        }
+    });
+
+    function hideLoader() {
+        if(appLoader) {
+            appLoader.style.opacity = '0';
+            setTimeout(() => appLoader.style.display = 'none', 500);
+        }
+    }
+
+    function checkConnection() {
+        if(appLoader) {
+            appLoader.style.display = 'flex';
+            appLoader.style.opacity = '1';
+        }
+        videoCompletedOnce = false;
+        pageFullyLoaded = false;
+        video.currentTime = 0;
+        video.play();
+
+        setTimeout(() => {
+            if (navigator.onLine) {
+                document.getElementById('offline-screen').style.display = 'none';
+                window.location.reload();
+            } else {
+                if(appLoader) appLoader.style.display = 'none';
+                alert('Still no internet connection! Please check your Wi-Fi or Mobile Data.');
+            }
+        }, 800);
     }
 
     window.addEventListener('online', () => {
@@ -139,7 +208,6 @@
         document.getElementById('offline-screen').style.display = 'flex';
     });
 
-    // Check on initial load
     if (!navigator.onLine) {
         document.getElementById('offline-screen').style.display = 'flex';
     }
