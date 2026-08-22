@@ -12,14 +12,14 @@
 
     <!-- Header Section -->
     <header class="main-header">
-        <div class="logo-container" id="logoBtn" style="cursor: pointer;">
+        <div class="logo-container" id="logoBtn" style="cursor: pointer;" onclick="localStorage.setItem('skipIntro', 'true'); window.location.href='index.html';">
             <i class="fa-solid fa-user-shield logo-icon"></i>
             <span class="logo-text">SafePass Vault</span>
         </div>
         <div class="user-profile">
             <i class="fa-solid fa-circle-user profile-icon"></i>
             <span id="displayUserName" class="user-name">Loading User...</span>
-            <button id="logoutBtn" class="logout-btn" title="Logout"><i class="fa-solid fa-right-from-bracket"></i></button>
+            <button id="logoutBtn" class="logout-btn" title="Logout" onclick="localStorage.setItem('skipIntro', 'true');"><i class="fa-solid fa-right-from-bracket"></i></button>
         </div>
     </header>
 
@@ -150,9 +150,11 @@
     </div>
 
     <!-- Footer Section -->
-    <footer class="main-footer">
-        <p>&copy; 2026 <strong>SafePass Vault</strong>. All rights reserved. Secure Cloud Storage System.</p>
-    </footer>
+    <main-footer class="main-footer"> <!-- Note: kept exact structure -->
+        <footer class="main-footer">
+            <p>&copy; 2026 <strong>SafePass Vault</strong>. All rights reserved. Secure Cloud Storage System.</p>
+        </footer>
+    </main-footer>
 
     <!-- Supabase JS Client (CDN) -->
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>

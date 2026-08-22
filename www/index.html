@@ -32,7 +32,7 @@
 
     <!-- Center Video Logo (Professional & Responsive) -->
     <div style="display: flex; justify-content: center; align-items: center; width: 100%;">
-        <video id="introVideo" src="safepass_vault_mobile_intro.mp4" autoplay muted playsinline style="max-width: 260px; width: 100%; height: auto; border-radius: 16px; object-fit: contain; box-shadow: 0 10px 30px rgba(0,0,0,0.5);"></video>
+        <video id="introVideo" src="safepass_vault_mobile_intro.mp4" autoplay muted playsinline style="max-width: 400px; width: 90%; height: auto; border-radius: 20px; object-fit: contain; box-shadow: 0 10px 30px rgba(0,0,0,0.5);"></video>
     </div>
 
     <!-- Bottom Section: Spinner & Application Loading Text -->
@@ -144,26 +144,35 @@
 
 <!-- Loader, Pull-to-Refresh & Internet Status Checker Script -->
 <script>
-    let pageFullyLoaded = false;
-    let videoCompletedOnce = false;
     const video = document.getElementById('introVideo');
     const appLoader = document.getElementById('appLoader');
+    const offlineScreen = document.getElementById('offline-screen');
 
-    // ভিডিও লুপ ও শেষ হওয়ার লজিক
-    video.addEventListener('ended', function() {
-        videoCompletedOnce = true;
-        if (pageFullyLoaded) {
-            hideLoader();
+    // লগআউট করে আসলে বা পেজ রিলোডে skipIntro চেক করা
+    window.addEventListener('DOMContentLoaded', function() {
+        if (localStorage.getItem('skipIntro') === 'true') {
+            if (appLoader) {
+                appLoader.style.display = 'none'; // ভিডিও লোডার সাথে সাথে হাইড হয়ে যাবে
+            }
+            localStorage.removeItem('skipIntro'); // পরবর্তীতে আবার অ্যাপ ওপেন করলে ভিডিও দেখানোর জন্য ক্লিয়ার করে দেওয়া হলো
         } else {
-            video.currentTime = 0;
-            video.play();
-        }
-    });
+            // স্বাভাবিকভাবে অ্যাপ ওপেন করলে ভিডিও প্লে হবে
+            if (video) {
+                video.addEventListener('loadedmetadata', function() {
+                    video.currentTime = 2;
+                });
 
-    window.addEventListener('load', function() {
-        pageFullyLoaded = true;
-        if (video.ended || videoCompletedOnce) {
-            hideLoader();
+                video.addEventListener('ended', function() {
+                    if (navigator.onLine) {
+                        hideLoader();
+                    } else {
+                        hideLoader();
+                        if(offlineScreen) {
+                            offlineScreen.style.display = 'flex';
+                        }
+                    }
+                });
+            }
         }
     });
 
@@ -174,11 +183,10 @@
         }
     }
 
-    // Try Again বাটনে ক্লিক করলে পেজ ব্ল্যাঙ্ক না হয়ে সুন্দরভাবে লোডার ও ভিডিও প্লে হবে
+    // Try Again বাটনে ক্লিক করলে আবার ২ সেকেন্ড স্কিপ করে পুরো ভিডিও প্লে হবে
     function checkConnection() {
-        const offlineScreen = document.getElementById('offline-screen');
         if(offlineScreen) {
-            offlineScreen.style.display = 'none'; // অফলাইন স্ক্রিন সরাবে
+            offlineScreen.style.display = 'none';
         }
 
         if(appLoader) {
@@ -186,38 +194,21 @@
             appLoader.style.opacity = '1';
         }
 
-        videoCompletedOnce = false;
-        pageFullyLoaded = false;
         if(video) {
-            video.currentTime = 0;
+            video.currentTime = 2;
             video.play();
         }
-
-        setTimeout(() => {
-            if (navigator.onLine) {
-                window.location.reload();
-            } else {
-                hideLoader();
-                if(offlineScreen) offlineScreen.style.display = 'flex';
-                alert('Still no internet connection! Please check your Wi-Fi or Mobile Data.');
-            }
-        }, 1200);
     }
 
     window.addEventListener('online', () => {
-        document.getElementById('offline-screen').style.display = 'none';
-        window.location.reload();
+        if(offlineScreen) offlineScreen.style.display = 'none';
     });
 
     window.addEventListener('offline', () => {
-        document.getElementById('offline-screen').style.display = 'flex';
+        if(offlineScreen) offlineScreen.style.display = 'flex';
     });
 
-    if (!navigator.onLine) {
-        document.getElementById('offline-screen').style.display = 'flex';
-    }
-
-    // --- Mobile Pull-to-Refresh (স্ক্রিন টেনে নিচে নামালে রিফ্রেশ হওয়া) ---
+    // --- Mobile Pull-to-Refresh (স্ক্রিন টেনে নিচে নামালে ভিডিও পুনরায় শুরু হবে) ---
     let touchStartY = 0;
     window.addEventListener('touchstart', function(e) {
         touchStartY = e.touches[0].clientY;
@@ -225,20 +216,18 @@
 
     window.addEventListener('touchend', function(e) {
         let touchEndY = e.changedTouches[0].clientY;
-        // যদি পেজ একদম ওপরে থাকে (scrollTop === 0) এবং নিচের দিকে টান দেওয়া হয় (pull down)
         if (window.scrollY === 0 && (touchEndY - touchStartY) > 120) {
-            // লোডার চালু করে রিফ্রেশ করবে
+            if(offlineScreen) {
+                offlineScreen.style.display = 'none';
+            }
             if(appLoader) {
                 appLoader.style.display = 'flex';
                 appLoader.style.opacity = '1';
             }
             if(video) {
-                video.currentTime = 0;
+                video.currentTime = 2;
                 video.play();
             }
-            setTimeout(() => {
-                window.location.reload();
-            }, 800);
         }
     }, {passive: true});
 </script>
