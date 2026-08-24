@@ -86,7 +86,43 @@ document.addEventListener('DOMContentLoaded', () => {
     // Modal Background Click Dismiss
     window.addEventListener('click', (e) => {
         if (e.target === errorModal) errorModal.style.display = 'none';
-        if (e.target === forgotPromptModal) forgotPromptModal.style.display = 'none';
+        if (e.target === forgotPromptModal) {
+            forgotPromptModal.style.display = 'none';
+            if (resetIdentifierInput) resetIdentifierInput.value = '';
+        }
+    });
+
+    // ==========================================
+    // Keyboard Navigation & Enter Key Support for Modals
+    // ==========================================
+    window.addEventListener('keydown', (e) => {
+        const isForgotOpen = forgotPromptModal && getComputedStyle(forgotPromptModal).display !== 'none';
+        const isErrorOpen = errorModal && getComputedStyle(errorModal).display !== 'none';
+
+        // ফোট গট পাসওয়ার্ড পপআপ খোলা থাকলে Enter বা Esc হ্যান্ডেল করা
+        if (isForgotOpen) {
+            if (e.key === 'Enter') {
+                // যদি ইউজার Cancel বাটনে ফোকাস করে এন্টার দেয়, তবে সাবমিট যেন না হয়
+                if (document.activeElement === cancelForgotBtn) {
+                    e.preventDefault();
+                    if (cancelForgotBtn) cancelForgotBtn.click();
+                    return;
+                }
+                e.preventDefault();
+                if (submitForgotBtn) submitForgotBtn.click();
+            } else if (e.key === 'Escape') {
+                e.preventDefault();
+                if (cancelForgotBtn) cancelForgotBtn.click();
+            }
+        }
+
+        // এরর মডাল খোলা থাকলে Enter বা Esc দিয়ে ক্লোজ করা
+        if (isErrorOpen) {
+            if (e.key === 'Enter' || e.key === 'Escape') {
+                e.preventDefault();
+                if (closeModalBtn) closeModalBtn.click();
+            }
+        }
     });
 
     // Validation Helpers
@@ -216,13 +252,22 @@ document.addEventListener('DOMContentLoaded', () => {
                 return;
             }
 
-            if (forgotPromptModal) forgotPromptModal.style.display = 'flex';
+            if (forgotPromptModal) {
+                forgotPromptModal.style.display = 'flex';
+                // মডাল ওপেন হওয়ার সাথে সাথে ইনপুট ফিল্ডে অটো ফোকাস করে দেওয়া যাতে অ্যারো/এন্টার কাজ করতে সমস্যা না হয়
+                setTimeout(() => {
+                    if (resetIdentifierInput) resetIdentifierInput.focus();
+                }, 100);
+            }
         });
     }
 
     if (cancelForgotBtn) {
         cancelForgotBtn.addEventListener('click', () => {
             if (forgotPromptModal) forgotPromptModal.style.display = 'none';
+            if (resetIdentifierInput) resetIdentifierInput.value = '';
+            // রিডাইরেক্ট করে পেজে ফিরে আসার জন্য (ইনডেক্স বা লগইন পেজ)
+            window.location.href = "index.html";
         });
     }
 
