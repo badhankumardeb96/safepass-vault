@@ -1,0 +1,212 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+}
+
+body {
+    background: #f4f7f6;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+
+.login-container {
+    width: 100%;
+    max-width: 400px;
+    padding: 20px;
+}
+
+.login-card {
+    background: white;
+    padding: 30px;
+    border-radius: 10px;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.08);
+}
+
+.login-header {
+    text-align: center;
+    margin-bottom: 25px;
+}
+
+.login-header i {
+    font-size: 2.5rem;
+    color: #2c3e50;
+    margin-bottom: 10px;
+}
+
+.login-header h2 {
+    color: #2c3e50;
+    font-size: 1.5rem;
+}
+
+.login-header p {
+    color: #777;
+    font-size: 0.85rem;
+    margin-top: 5px;
+}
+
+.form-group {
+    margin-bottom: 15px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.form-group label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: #444;
+}
+
+.form-group input {
+    padding: 10px 12px;
+    border: 1px solid #ccc;
+    border-radius: 5px;
+    font-size: 0.95rem;
+}
+
+.form-group input:focus {
+    outline: none;
+    border-color: #3498db;
+}
+
+.login-btn {
+    width: 100%;
+    margin-top: 15px;
+    background: #27ae60;
+    color: white;
+    border: none;
+    padding: 12px;
+    font-size: 1rem;
+    font-weight: bold;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: 0.3s;
+}
+
+.login-btn:hover {
+    background: #219653;
+}
+
+/* Owner Create Account Button Style */
+.owner-action-section {
+    margin-top: 15px;
+    text-align: center;
+    border-top: 1px dashed #ddd;
+    padding-top: 15px;
+}
+
+.create-account-btn {
+    background: #2980b9;
+    color: white;
+    border: none;
+    padding: 10px 15px;
+    font-size: 0.9rem;
+    font-weight: bold;
+    border-radius: 5px;
+    cursor: pointer;
+    width: 100%;
+    transition: 0.3s;
+}
+
+.create-account-btn:hover {
+    background: #2471a3;
+}
+
+.login-footer {
+    text-align: center;
+    margin-top: 20px;
+    font-size: 0.85rem;
+    color: #666;
+}
+
+.contact-owner {
+    color: #e74c3c;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+/* Popup Overlay Styles */
+.popup-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: none;
+    justify-content: center;
+    align-items: center;
+    z-index: 1000;
+}
+
+.popup-box {
+    background: white;
+    padding: 30px;
+    border-radius: 10px;
+    text-align: center;
+    width: 350px;
+    box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    animation: popupScale 0.3s ease-in-out;
+}
+
+@keyframes popupScale {
+    from { transform: scale(0.7); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
+
+/* Pin Modal Icon Style */
+.pin-icon i {
+    font-size: 3rem;
+    color: #2980b9;
+    margin-bottom: 10px;
+}
+
+.pin-modal-buttons {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+}
+
+/* Red Flashing Icon Animation for Warning */
+.warning-icon-flash i {
+    font-size: 3.5rem;
+    color: #ff0000;
+    margin-bottom: 10px;
+    animation: flashEffect 0.8s infinite alternate;
+}
+
+@keyframes flashEffect {
+    0% { opacity: 0.3; transform: scale(0.95); }
+    100% { opacity: 1; transform: scale(1.1); }
+}
+
+.popup-box h3 {
+    color: #c0392b;
+    margin-bottom: 5px;
+}
+
+.popup-box p {
+    color: #555;
+    font-size: 0.9rem;
+    margin: 10px 0 20px 0;
+    line-height: 1.4;
+}
+
+.popup-btn {
+    background: #c0392b;
+    color: white;
+    border: none;
+    padding: 8px 25px;
+    font-weight: bold;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: 0.2s;
+}
+
+.popup-btn:hover {
+    background: #962d22;
+}
