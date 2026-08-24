@@ -170,7 +170,7 @@ async function loadUserDetails(isSilent = false) {
                 email: "N/A",
                 phoneNumber: "N/A",
                 status: "active"
-            };
+          };
         }
 
         let rawVaultData = [];
@@ -178,17 +178,17 @@ async function loadUserDetails(isSilent = false) {
         if (supabaseClient) {
             const possibleTableNames = ['credentials', 'vault', 'vaults', 'vault_records', 'user_vaults'];
             for (let tName of possibleTableNames) {
-                try {
-                    const { data: vData, error } = await supabaseClient
-                        .from(tName)
-                        .select('*')
-                        .or(`user_id.eq.${targetCleanId},userId.eq.${targetCleanId},uid.eq.${targetCleanId}`);
+                  try {
+                      const { data: vData, error } = await supabaseClient
+                          .from(tName)
+                          .select('*')
+                          .or(`user_id.eq.${targetCleanId},userId.eq.${targetCleanId},uid.eq.${targetCleanId}`);
 
-                    if (!error && vData && vData.length > 0) {
-                        vData.forEach(item => {
-                            const itemUserId = String(item.user_id || item.userId || item.uid || '').trim();
-                            if (itemUserId === targetCleanId) {
-                                rawVaultData.push(item);
+                      if (!error && vData && vData.length > 0) {
+                          vData.forEach(item => {
+                              const itemUserId = String(item.user_id || item.userId || item.uid || '').trim();
+                              if (itemUserId === targetCleanId) {
+                                    rawVaultData.push(item);
                             }
                         });
                         break; 
@@ -202,29 +202,29 @@ async function loadUserDetails(isSilent = false) {
                 'vault_records', 'user_vaults', 'vaults', 'saved_vaults', 
                 'vault_data', 'passwords', 'user_vault_records', 'vaultList', 
                 'credentials', 'vault', 'my_vault', 'vaultData'
-            ];
+          ];
 
             for (let vk of localVaultKeys) {
-                const vRaw = localStorage.getItem(vk);
-                if (vRaw) {
-                    try {
-                        const vParsed = JSON.parse(vRaw);
-                        if (Array.isArray(vParsed)) {
-                            vParsed.forEach(lv => {
-                                const lvUid = String(lv.userId || lv.user_id || lv.uid || '').trim();
-                                if (lvUid === targetCleanId) {
-                                    rawVaultData.push(lv);
-                                }
-                            });
+                  const vRaw = localStorage.getItem(vk);
+                  if (vRaw) {
+                      try {
+                          const vParsed = JSON.parse(vRaw);
+                          if (Array.isArray(vParsed)) {
+                              vParsed.forEach(lv => {
+                                    const lvUid = String(lv.userId || lv.user_id || lv.uid || '').trim();
+                                    if (lvUid === targetCleanId) {
+                                        rawVaultData.push(lv);
+                                    }
+                          });
                         } else if (vParsed && typeof vParsed === 'object') {
                             const lvUid = String(vParsed.userId || vParsed.user_id || vParsed.uid || '').trim();
                             if (lvUid === targetCleanId) {
                                 rawVaultData.push(vParsed);
-                            }
+                          }
                         }
                     } catch(e) {}
                 }
-            }
+          }
         }
 
         const uniqueVaultMap = new Map();
@@ -232,7 +232,7 @@ async function loadUserDetails(isSilent = false) {
             const uniqueKey = item.id || `${item.platform || item.service || 'p'}_${item.identifier || item.username || item.email || 'u'}_${item.password || item.secret || 's'}`;
             if (!uniqueVaultMap.has(uniqueKey)) {
                 uniqueVaultMap.set(uniqueKey, item);
-            }
+          }
         });
 
         userData.vaultRecords = Array.from(uniqueVaultMap.values());
@@ -364,11 +364,11 @@ function renderUserInfo(user) {
                     </p>
 
                     ${notes ? `<p class="mb-0 text-light pt-2 mt-2" style="font-size: 13.5px; border-top: 1px dashed #374151;"><strong>Notes:</strong> <span style="color: #9ca3af;">${notes}</span></p>` : ''}
-                </div>
-            `;
-            vaultContainer.appendChild(card);
-        });
-    }
+              </div>
+          `;
+          vaultContainer.appendChild(card);
+      });
+   }
 }
 
 /* ==========================================================================
@@ -393,10 +393,10 @@ async function updateUserStatus() {
             body: JSON.stringify({ status: newStatus })
         });
         showFlashPopup(`Status successfully updated to '${newStatus.toUpperCase()}'!`, "success");
-    } catch (e) {
+   } catch (e) {
         console.error(e);
         showFlashPopup("Failed to update status!", "error");
-    }
+   }
 }
 
 /* ==========================================================================
@@ -431,10 +431,10 @@ async function updatePassword() {
             document.getElementById("currentPasswordInput").value = newPass;
         }
         inputElem.value = "";
-    } catch (e) {
+   } catch (e) {
         console.error(e);
         showFlashPopup("Failed to update password!", "error");
-    }
+   }
 }
 
 /* ==========================================================================
@@ -452,7 +452,7 @@ async function deleteAccount() {
 
             await fetch(`${API_BASE_URL}/admin/delete-user/${currentUserId}`, {
                 method: 'DELETE'
-            });
+          });
             
             showFlashPopup("Account deleted successfully!", "success");
             setTimeout(() => { window.location.href = "admin.html"; }, 1500);
@@ -460,7 +460,7 @@ async function deleteAccount() {
             console.error(e);
             showFlashPopup("Failed to delete account!", "error");
         }
-    }
+   }
 }
 
 /* ==========================================================================
@@ -481,9 +481,9 @@ function initSupabaseRealtime() {
                         showFlashPopup("This user account has been deleted!", "error");
                         setTimeout(() => { window.location.href = "admin.html"; }, 1500);
                         return;
-                    }
-                }
-            }
+                  }
+              }
+          }
         )
         .on('postgres_changes', { event: '*', schema: 'public', table: 'credentials' }, () => { loadUserDetails(); })
         .on('postgres_changes', { event: '*', schema: 'public', table: 'vault' }, () => { loadUserDetails(); })
@@ -494,7 +494,7 @@ function initSupabaseRealtime() {
                 updateNetworkStatusIndicator(true);
             } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
                 updateNetworkStatusIndicator(false);
-            }
+          }
         });
 }
 
