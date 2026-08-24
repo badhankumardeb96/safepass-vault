@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F8F9FA"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="32dp">
+
+    <LinearLayout
+        android:layout_width="90dp"
+        android:layout_height="90dp"
+        android:background="@drawable/bg_circle_icon"
+        android:gravity="center"
+        android:layout_marginBottom="24dp">
+
+        <ImageView
+            android:layout_width="45dp"
+            android:layout_height="45dp"
+            android:contentDescription="No Internet Icon"
+            android:src="@android:drawable/ic_menu_upload"
+            app:tint="#FF3B30" />
+    </LinearLayout>
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="No Internet Connection"
+        android:textSize="22sp"
+        android:textStyle="bold"
+        android:textColor="#1A1A1A"
+        android:layout_marginBottom="8dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Please connect your mobile data or Wi-Fi to use this application."
+        android:textSize="14sp"
+        android:textColor="#666666"
+        android:gravity="center"
+        android:layout_marginBottom="28dp" />
+
+    <Button
+        android:id="@+id/btnTryAgain"
+        android:layout_width="220dp"
+        android:layout_height="52dp"
+        android:text="Try Again"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="#2563EB"
+        android:textStyle="bold"
+        android:textSize="16sp"
+        android:textAllCaps="false"
+        android:elevation="4dp" />
+
+</LinearLayout>

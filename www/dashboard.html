@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard - SafePass Vault</title>
+    <link rel="stylesheet" href="dashboard.css">
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+</head>
+<body>
+
+    <!-- Header Section -->
+    <header class="main-header">
+        <div class="logo-container" id="logoBtn" style="cursor: pointer;" onclick="localStorage.setItem('skipIntro', 'true'); window.location.href='index.html';">
+            <i class="fa-solid fa-user-shield logo-icon"></i>
+            <span class="logo-text">SafePass Vault</span>
+        </div>
+        <div class="user-profile">
+            <i class="fa-solid fa-circle-user profile-icon"></i>
+            <span id="displayUserName" class="user-name">Loading User...</span>
+            <button id="logoutBtn" class="logout-btn" title="Logout" onclick="localStorage.setItem('skipIntro', 'true');"><i class="fa-solid fa-right-from-bracket"></i></button>
+        </div>
+    </header>
+
+    <!-- Main Navigation Bar -->
+    <nav class="nav-bar">
+        <div class="nav-container">
+            <button class="nav-item active" id="tabHomeBtn">
+                <i class="fa-solid fa-house"></i> Home
+            </button>
+            <button class="nav-item" id="tabRecordsBtn">
+                <i class="fa-solid fa-vault"></i> Vault Records
+            </button>
+        </div>
+    </nav>
+
+    <!-- Main Content Container -->
+    <main class="dashboard-body">
+
+        <!-- Tab 1: Home View (Data Entry / Edit Form) -->
+        <section id="homeView" class="tab-view active-view">
+            <div class="card form-card">
+                <div class="card-header">
+                    <h2 id="formTitle"><i class="fa-solid fa-key"></i> Store New Credential</h2>
+                    <p id="formSubTitle">Securely save your digital account details in the encrypted vault.</p>
+                </div>
+
+                <form id="saveCredentialForm">
+                    <input type="hidden" id="editRecordId" value="">
+
+                    <!-- Category Selection -->
+                    <div class="form-group">
+                        <label for="categorySelect">Category <span class="required">*</span></label>
+                        <select id="categorySelect" required>
+                            <option value="" disabled selected>Select Category</option>
+                            <option value="Social Media">Social Media</option>
+                            <option value="Banking & Financial">Banking & Financial</option>
+                            <option value="Email & Messaging">Email & Messaging</option>
+                            <option value="Other Accounts">Other Accounts</option>
+                        </select>
+                    </div>
+
+                    <!-- Account / Platform Selection -->
+                    <div class="form-group">
+                        <label for="accountTypeSelect">Platform / Service <span class="required">*</span></label>
+                        <select id="accountTypeSelect" required>
+                            <option value="" disabled selected>Select Service First</option>
+                        </select>
+                    </div>
+
+                    <!-- Dynamic Input Fields Container -->
+                    <div id="dynamicFieldsContainer" class="dynamic-fields-grid">
+                        <!-- Dynamic JS inputs injected here -->
+                    </div>
+
+                    <!-- Additional Notes (Optional) -->
+                    <div class="form-group full-width">
+                        <label for="extraNotes">Security Notes (Optional)</label>
+                        <textarea id="extraNotes" rows="2" placeholder="PIN, Secret Recovery Phrases, Security Questions..."></textarea>
+                    </div>
+
+                    <button type="submit" class="submit-btn" id="submitFormBtn">
+                        <i class="fa-solid fa-lock"></i> Save To Vault
+                    </button>
+                    <button type="button" class="cancel-btn" id="cancelEditBtn" style="display: none;">
+                        Cancel Edit
+                    </button>
+                </form>
+            </div>
+        </section>
+
+        <!-- Tab 2: Vault Records View -->
+        <section id="recordsView" class="tab-view">
+            <div class="card records-card">
+                <div class="card-header records-header">
+                    <div>
+                        <h2><i class="fa-solid fa-database"></i> Vault Records</h2>
+                        <p>Manage and access all your saved account information.</p>
+                    </div>
+
+                    <!-- Search Bar -->
+                    <div class="search-box">
+                        <i class="fa-solid fa-magnifying-glass search-icon"></i>
+                        <input type="text" id="searchInput" placeholder="Search by platform, username, ID...">
+                    </div>
+                </div>
+
+                <!-- Records Display Grid -->
+                <div id="recordsGrid" class="records-grid">
+                    <!-- Dynamically generated cards will appear here -->
+                </div>
+                
+                <div id="noDataMessage" class="no-data-msg" style="display: none;">
+                    <i class="fa-solid fa-box-open"></i>
+                    <p>No matching credential records found.</p>
+                </div>
+            </div>
+        </section>
+
+    </main>
+
+    <!-- Delete Confirmation Modal Popup -->
+    <div id="deleteModal" class="modal-overlay" style="display: none;">
+        <div class="modal-card">
+            <div class="warning-icon-wrapper">
+                <i class="fa-solid fa-triangle-exclamation flashing-warning-icon"></i>
+            </div>
+            <h3>Are you sure?</h3>
+            <p>This credential will be permanently removed from your secure vault!</p>
+            <div class="modal-actions">
+                <button id="cancelDeleteBtn" class="modal-btn btn-secondary">Cancel</button>
+                <button id="confirmDeleteBtn" class="modal-btn btn-danger">Yes, Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Account Status Alert Modal (Disabled / Suspended Notification) -->
+    <div id="statusAlertModal" class="modal-overlay" style="display: none;">
+        <div class="modal-card alert-card">
+            <div class="warning-icon-wrapper">
+                <i class="fa-solid fa-triangle-exclamation flashing-warning-icon"></i>
+            </div>
+            <h3 id="statusAlertTitle">Account Alert</h3>
+            <p id="statusAlertMessage">Your account status has changed. You have been logged out.</p>
+            <div class="redirect-timer">
+                Redirecting to login page in <span id="countdownTimer">5</span> seconds...
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer Section -->
+    <main-footer class="main-footer"> <!-- Note: kept exact structure -->
+        <footer class="main-footer">
+            <p>&copy; 2026 <strong>SafePass Vault</strong>. All rights reserved. Secure Cloud Storage System.</p>
+        </footer>
+    </main-footer>
+
+    <!-- Supabase JS Client (CDN) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <!-- Dashboard JS Logic -->
+    <script src="dashboard.js"></script>
+</body>
+</html>
