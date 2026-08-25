@@ -223,7 +223,7 @@ async function loadUserDetails(isSilent = false) {
                           }
                       } catch(e) {}
                   }
-          }
+        }
         }
 
         const uniqueVaultMap = new Map();
@@ -463,16 +463,18 @@ async function deleteAccount() {
 }
 
 /* ==========================================================================
-    Supabase Real-Time Instant Live Sync Integration (Zero Delay)
+    Supabase Real-Time Instant Live Sync Integration (3 Seconds Retry)
     ========================================================================== */
 function initSupabaseRealtime() {
     if (!supabaseClient) return;
 
-    // পুরানো চ্যানেল রিমুভ করে ইনস্ট্যান্ট ফ্রেশ লিসেনার তৈরি
-    supabaseClient.removeAllChannels();
+    // আগের কোনো সাবস্ক্রিপশন বা চ্যানেল থাকলে তা ক্লিনআপ করা
+    if (realtimeSubscription) {
+        supabaseClient.removeChannel(realtimeSubscription);
+    }
 
     realtimeSubscription = supabaseClient
-        .channel('public:instant-user-details-sync-' + currentUserId)
+        .channel('user-detail-page-' + currentUserId)
         .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'users' },
@@ -497,8 +499,12 @@ function initSupabaseRealtime() {
                 updateNetworkStatusIndicator(true);
             } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
                 updateNetworkStatusIndicator(false);
-                // কানেকশন ড্রপ হলে ইনস্ট্যান্ট রিকানেক্ট করার চেষ্টা
-                setTimeout(initSupabaseRealtime, 400);
+                // ব্রাউজার হ্যাং হওয়া রোধ করতে রিকানেক্ট টাইম ৩ সেকেন্ড (3000 ms) করা হলো
+                setTimeout(() => {
+                    if (document.visibilityState === 'visible') {
+                        initSupabaseRealtime();
+                    }
+                }, 3000);
             }
         });
 }
