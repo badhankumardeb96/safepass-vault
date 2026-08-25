@@ -123,7 +123,7 @@ function handleLogout() {
 }
 
 /* ==========================================================================
-    Load User Information & Vault Records (Fixed Filter)
+    Load User Information & Vault Records (Fixed Filter for Supabase 'credentials' table)
     ========================================================================== */
 async function loadUserDetails(isSilent = false) {
     try {
@@ -175,24 +175,19 @@ async function loadUserDetails(isSilent = false) {
         let rawVaultData = [];
 
         if (supabaseClient) {
-            const possibleTableNames = ['credentials', 'vault', 'vaults', 'vault_records', 'user_vaults'];
-            for (let tName of possibleTableNames) {
-                 try {
-                     const { data: vData, error } = await supabaseClient
-                         .from(tName)
-                         .select('*')
-                         .or(`user_id.eq.${targetCleanId},userId.eq.${targetCleanId},uid.eq.${targetCleanId}`);
+             try {
+                 // আপনার Supabase ডাটাবেজের সঠিক টেবিল 'credentials' এবং সঠিক কলাম 'userId' ব্যবহার করা হলো
+                 const { data: vData, error } = await supabaseClient
+                     .from('credentials')
+                     .select('*')
+                     .eq('userId', targetCleanId);
 
-                     if (!error && vData && vData.length > 0) {
-                         vData.forEach(item => {
-                             const itemUserId = String(item.user_id || item.userId || item.uid || '').trim();
-                             if (itemUserId === targetCleanId) {
-                                     rawVaultData.push(item);
-                             }
-                         });
-                     }
-                 } catch (e) {}
-            }
+                 if (!error && vData) {
+                     rawVaultData = vData;
+                 }
+             } catch (e) {
+                 console.error("Supabase credentials fetch error:", e);
+             }
         }
 
         if (rawVaultData.length === 0) {
@@ -200,7 +195,7 @@ async function loadUserDetails(isSilent = false) {
                 'vault_records', 'user_vaults', 'vaults', 'saved_vaults', 
                 'vault_data', 'passwords', 'user_vault_records', 'vaultList', 
                 'credentials', 'vault', 'my_vault', 'vaultData'
-          ];
+            ];
 
             for (let vk of localVaultKeys) {
                   const vRaw = localStorage.getItem(vk);
@@ -467,12 +462,10 @@ async function deleteAccount() {
 function initSupabaseRealtime() {
     if (!supabaseClient) return;
 
-    // আগের কোনো সাবস্ক্রিপশন বা চ্যানেল থাকলে তা ক্লিনআপ করা
     if (realtimeSubscription) {
         supabaseClient.removeChannel(realtimeSubscription);
     }
 
-    // মোবাইল অ্যাপ বা অন্য কোনো ডিভাইস থেকে ডাটা ইনসার্ট/আপডেট/ডিলিট হলে তা লাইভ রিফ্লেক্ট করার লজিক
     realtimeSubscription = supabaseClient
         .channel('user-detail-page-' + currentUserId)
         .on(
@@ -491,28 +484,9 @@ function initSupabaseRealtime() {
             }
         )
         .on('postgres_changes', { event: '*', schema: 'public', table: 'credentials' }, (payload) => {
-            // মোবাইল অ্যাপ থেকে নতুন ভল্ট এন্ট্রি (যেমন Sonali Bank) যোগ হলে সাথে সাথে ফেচ করবে
-            const recordUserId = String(payload.new?.user_id || payload.new?.userId || payload.old?.user_id || payload.old?.userId || '').trim();
+            const recordUserId = String(payload.new?.userId || payload.old?.userId || '').trim();
             if (!recordUserId || recordUserId === String(currentUserId).trim()) {
-            	loadUserDetails(true);
-            }
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'vault' }, (payload) => {
-            const recordUserId = String(payload.new?.user_id || payload.new?.userId || payload.old?.user_id || payload.old?.userId || '').trim();
-            if (!recordUserId || recordUserId === String(currentUserId).trim()) {
-            	loadUserDetails(true);
-            }
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'vaults' }, (payload) => {
-            const recordUserId = String(payload.new?.user_id || payload.new?.userId || payload.old?.user_id || payload.old?.userId || '').trim();
-            if (!recordUserId || recordUserId === String(currentUserId).trim()) {
-            	loadUserDetails(true);
-            }
-        })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'vault_records' }, (payload) => {
-            const recordUserId = String(payload.new?.user_id || payload.new?.userId || payload.old?.user_id || payload.old?.userId || '').trim();
-            if (!recordUserId || recordUserId === String(currentUserId).trim()) {
-            	loadUserDetails(true);
+                loadUserDetails(true);
             }
         })
         .subscribe((status, err) => {
@@ -520,7 +494,6 @@ function initSupabaseRealtime() {
                 updateNetworkStatusIndicator(true);
             } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
                 updateNetworkStatusIndicator(false);
-                // ব্রাউজার হ্যাং হওয়া রোধ করতে রিকানেক্ট টাইম ৩ সেকেন্ড (3000 ms) করা হলো
                 setTimeout(() => {
                     if (document.visibilityState === 'visible') {
                         initSupabaseRealtime();
