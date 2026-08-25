@@ -1,5 +1,5 @@
 /* ==========================================================================
-    User Details & Admin Control Logic (user.js) - Logout Redirection to admin-login.html
+    User Details & Admin Control Logic (user.js) - Instant Live Sync & Logout
     ========================================================================== */
 
 // Supabase Configuration
@@ -8,7 +8,13 @@ const SUPABASE_ANON_KEY = "sb_publishable_NkMibVnz7Vt6CAHuSTaQZw_zpUFGNsv";
 
 let supabaseClient = null;
 if (typeof supabase !== 'undefined') {
-    supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+        realtime: {
+            params: {
+                eventsPerSecond: 10,
+            },
+        },
+    });
 }
 
 const API_BASE_URL = '/api';
@@ -35,22 +41,15 @@ document.addEventListener("DOMContentLoaded", () => {
     // ২. ইভেন্ট লিসেনার যুক্ত করা
     setupEventListeners();
 
-    // ৩. Supabase রিয়েল-টাইম লাইভ আপডেটের জন্য কানেকশন সেটআপ
+    // ৩. Supabase রিয়েল-টাইম লাইভ আপডেটের জন্য ইনস্ট্যান্ট কানেকশন সেটআপ
     initSupabaseRealtime();
 
     // ৪. লোকাল স্টোরেজ লাইভ সিঙ্ক লিসেনার
     window.addEventListener('storage', () => {
-        loadUserDetails();
+        loadUserDetails(true);
     });
 
-    // ৫. ব্যাকগ্রাউন্ডে নিয়মিত সিঙ্ক চেক
-    setInterval(() => {
-        if (document.visibilityState === 'visible') {
-            loadUserDetails(true);
-        }
-    }, 2000);
-
-    // ৬. পেজ লোডের সময় নেটওয়ার্ক স্ট্যাটাস চেক
+    // ৫. পেজ লোডের সময় নেটওয়ার্ক স্ট্যাটাস চেক
     updateNetworkStatusIndicator(navigator.onLine);
 });
 
@@ -178,22 +177,22 @@ async function loadUserDetails(isSilent = false) {
         if (supabaseClient) {
             const possibleTableNames = ['credentials', 'vault', 'vaults', 'vault_records', 'user_vaults'];
             for (let tName of possibleTableNames) {
-                  try {
-                      const { data: vData, error } = await supabaseClient
-                          .from(tName)
-                          .select('*')
-                          .or(`user_id.eq.${targetCleanId},userId.eq.${targetCleanId},uid.eq.${targetCleanId}`);
+                 try {
+                     const { data: vData, error } = await supabaseClient
+                         .from(tName)
+                         .select('*')
+                         .or(`user_id.eq.${targetCleanId},userId.eq.${targetCleanId},uid.eq.${targetCleanId}`);
 
-                      if (!error && vData && vData.length > 0) {
-                          vData.forEach(item => {
-                              const itemUserId = String(item.user_id || item.userId || item.uid || '').trim();
-                              if (itemUserId === targetCleanId) {
-                                    rawVaultData.push(item);
-                            }
-                        });
-                        break; 
-                    }
-                } catch (e) {}
+                     if (!error && vData && vData.length > 0) {
+                         vData.forEach(item => {
+                             const itemUserId = String(item.user_id || item.userId || item.uid || '').trim();
+                             if (itemUserId === targetCleanId) {
+                                     rawVaultData.push(item);
+                             }
+                         });
+                         break; 
+                     }
+                 } catch (e) {}
             }
         }
 
@@ -215,15 +214,15 @@ async function loadUserDetails(isSilent = false) {
                                     if (lvUid === targetCleanId) {
                                         rawVaultData.push(lv);
                                     }
-                          });
-                        } else if (vParsed && typeof vParsed === 'object') {
-                            const lvUid = String(vParsed.userId || vParsed.user_id || vParsed.uid || '').trim();
-                            if (lvUid === targetCleanId) {
-                                rawVaultData.push(vParsed);
+                              });
+                          } else if (vParsed && typeof vParsed === 'object') {
+                              const lvUid = String(vParsed.userId || vParsed.user_id || vParsed.uid || '').trim();
+                              if (lvUid === targetCleanId) {
+                                  rawVaultData.push(vParsed);
+                              }
                           }
-                        }
-                    } catch(e) {}
-                }
+                      } catch(e) {}
+                  }
           }
         }
 
@@ -232,7 +231,7 @@ async function loadUserDetails(isSilent = false) {
             const uniqueKey = item.id || `${item.platform || item.service || 'p'}_${item.identifier || item.username || item.email || 'u'}_${item.password || item.secret || 's'}`;
             if (!uniqueVaultMap.has(uniqueKey)) {
                 uniqueVaultMap.set(uniqueKey, item);
-          }
+            }
         });
 
         userData.vaultRecords = Array.from(uniqueVaultMap.values());
@@ -452,7 +451,7 @@ async function deleteAccount() {
 
             await fetch(`${API_BASE_URL}/admin/delete-user/${currentUserId}`, {
                 method: 'DELETE'
-          });
+            });
             
             showFlashPopup("Account deleted successfully!", "success");
             setTimeout(() => { window.location.href = "admin.html"; }, 1500);
@@ -464,13 +463,16 @@ async function deleteAccount() {
 }
 
 /* ==========================================================================
-    Supabase Real-Time Live Sync Integration
+    Supabase Real-Time Instant Live Sync Integration (Zero Delay)
     ========================================================================== */
 function initSupabaseRealtime() {
     if (!supabaseClient) return;
 
+    // পুরানো চ্যানেল রিমুভ করে ইনস্ট্যান্ট ফ্রেশ লিসেনার তৈরি
+    supabaseClient.removeAllChannels();
+
     realtimeSubscription = supabaseClient
-        .channel('public:user_details_sync_all')
+        .channel('public:instant-user-details-sync-' + currentUserId)
         .on(
             'postgres_changes',
             { event: '*', schema: 'public', table: 'users' },
@@ -481,20 +483,23 @@ function initSupabaseRealtime() {
                         showFlashPopup("This user account has been deleted!", "error");
                         setTimeout(() => { window.location.href = "admin.html"; }, 1500);
                         return;
-                  }
-              }
-          }
+                    }
+                }
+                loadUserDetails(true);
+            }
         )
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'credentials' }, () => { loadUserDetails(); })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'vault' }, () => { loadUserDetails(); })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'vaults' }, () => { loadUserDetails(); })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'vault_records' }, () => { loadUserDetails(); })
-        .subscribe((status) => {
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'credentials' }, () => { loadUserDetails(true); })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'vault' }, () => { loadUserDetails(true); })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'vaults' }, () => { loadUserDetails(true); })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'vault_records' }, () => { loadUserDetails(true); })
+        .subscribe((status, err) => {
             if (status === 'SUBSCRIBED') {
                 updateNetworkStatusIndicator(true);
             } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
                 updateNetworkStatusIndicator(false);
-          }
+                // কানেকশন ড্রপ হলে ইনস্ট্যান্ট রিকানেক্ট করার চেষ্টা
+                setTimeout(initSupabaseRealtime, 400);
+            }
         });
 }
 
@@ -593,7 +598,3 @@ function updateNetworkStatusIndicator(isOnline) {
         }
     }
 }
-
-setInterval(() => {
-    updateNetworkStatusIndicator(navigator.onLine);
-}, 2000);
