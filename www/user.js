@@ -204,10 +204,10 @@ async function loadUserDetails(isSilent = false) {
                           const vParsed = JSON.parse(vRaw);
                           if (Array.isArray(vParsed)) {
                               vParsed.forEach(lv => {
-                                    const lvUid = String(lv.userId || lv.user_id || lv.uid || '').trim();
-                                    if (lvUid === targetCleanId) {
-                                        rawVaultData.push(lv);
-                                    }
+                                  const lvUid = String(lv.userId || lv.user_id || lv.uid || '').trim();
+                                  if (lvUid === targetCleanId) {
+                                      rawVaultData.push(lv);
+                                  }
                               });
                           } else if (vParsed && typeof vParsed === 'object') {
                               const lvUid = String(vParsed.userId || vParsed.user_id || vParsed.uid || '').trim();
@@ -393,7 +393,7 @@ async function updateUserStatus() {
 }
 
 /* ==========================================================================
-    Update User Password
+    Update User Password (Supabase Auth + Local Database)
     ========================================================================== */
 async function updatePassword() {
     const inputElem = document.getElementById("newPasswordInput") || document.getElementById("setNewPasswordInput");
@@ -407,6 +407,23 @@ async function updatePassword() {
 
     try {
         if (supabaseClient) {
+            // ১. Supabase Auth সার্ভারে ইউজারের পাসওয়ার্ড আপডেট করা (যদি ইউজারটির সঠিক Auth UID বা আইডি পাওয়া যায়)
+            let targetAuthUid = currentUserId;
+            if (userData && (userData.uid || userData.id)) {
+                targetAuthUid = userData.uid || userData.id;
+            }
+
+            // Supabase Admin API দিয়ে Auth পাসওয়ার্ড আপডেট করার চেষ্টা
+            const { error: authError } = await supabaseClient.auth.admin.updateUserById(
+                targetAuthUid,
+                { password: newPass }
+            );
+
+            if (authError) {
+                console.warn("Supabase Auth admin update notice:", authError.message);
+            }
+
+            // ২. Supabase 'users' টেবিলে পাসওয়ার্ড আপডেট করা
             await supabaseClient
                 .from('users')
                 .update({ password: newPass, plainPassword: newPass })
