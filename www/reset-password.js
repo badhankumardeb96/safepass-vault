@@ -62,8 +62,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
                 const userEmail = authData.user?.email;
 
+                // ২. কাস্টম 'users' টেবিলে 'password' এবং 'plainPassword' উভয় কলামে আপডেট করা
                 if (userEmail) {
-                    // ২. কাস্টম 'users' টেবিলে পাসওয়ার্ড আপডেট করা (উভয় কলামে ট্রাই করা হচ্ছে যাতে মিস না হয়)
                     const { error: dbError } = await supabase
                         .from('users')
                         .update({ 
@@ -73,17 +73,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                         .eq('email', userEmail);
 
                     if (dbError) {
-                        console.error("Database table update error:", dbError.message);
-                        // যদি ইমেইল দিয়ে না মিলে, তবে বর্তমান সেশনের আইডি দিয়ে আপডেট করার চেষ্টা করা
-                        if (authData.user?.id) {
-                            await supabase
-                                .from('users')
-                                .update({ 
-                                    password: newPassword, 
-                                    plainPassword: newPassword 
-                                })
-                                .or(`userId.eq.${authData.user.id},id.eq.${authData.user.id}`);
-                        }
+                        console.error("Database update error:", dbError);
                     }
                 }
 
