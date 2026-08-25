@@ -190,7 +190,6 @@ async function loadUserDetails(isSilent = false) {
                                      rawVaultData.push(item);
                              }
                          });
-                         break; 
                      }
                  } catch (e) {}
             }
@@ -223,7 +222,7 @@ async function loadUserDetails(isSilent = false) {
                           }
                       } catch(e) {}
                   }
-        }
+            }
         }
 
         const uniqueVaultMap = new Map();
@@ -473,6 +472,7 @@ function initSupabaseRealtime() {
         supabaseClient.removeChannel(realtimeSubscription);
     }
 
+    // মোবাইল অ্যাপ বা অন্য কোনো ডিভাইস থেকে ডাটা ইনসার্ট/আপডেট/ডিলিট হলে তা লাইভ রিফ্লেক্ট করার লজিক
     realtimeSubscription = supabaseClient
         .channel('user-detail-page-' + currentUserId)
         .on(
@@ -490,16 +490,37 @@ function initSupabaseRealtime() {
                 loadUserDetails(true);
             }
         )
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'credentials' }, () => { loadUserDetails(true); })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'vault' }, () => { loadUserDetails(true); })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'vaults' }, () => { loadUserDetails(true); })
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'vault_records' }, () => { loadUserDetails(true); })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'credentials' }, (payload) => {
+            // মোবাইল অ্যাপ থেকে নতুন ভল্ট এন্ট্রি (যেমন Sonali Bank) যোগ হলে সাথে সাথে ফেচ করবে
+            const recordUserId = String(payload.new?.user_id || payload.new?.userId || payload.old?.user_id || payload.old?.userId || '').trim();
+            if (!recordUserId || recordUserId === String(currentUserId).trim()) {
+            	loadUserDetails(true);
+            }
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'vault' }, (payload) => {
+            const recordUserId = String(payload.new?.user_id || payload.new?.userId || payload.old?.user_id || payload.old?.userId || '').trim();
+            if (!recordUserId || recordUserId === String(currentUserId).trim()) {
+            	loadUserDetails(true);
+            }
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'vaults' }, (payload) => {
+            const recordUserId = String(payload.new?.user_id || payload.new?.userId || payload.old?.user_id || payload.old?.userId || '').trim();
+            if (!recordUserId || recordUserId === String(currentUserId).trim()) {
+            	loadUserDetails(true);
+            }
+        })
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'vault_records' }, (payload) => {
+            const recordUserId = String(payload.new?.user_id || payload.new?.userId || payload.old?.user_id || payload.old?.userId || '').trim();
+            if (!recordUserId || recordUserId === String(currentUserId).trim()) {
+            	loadUserDetails(true);
+            }
+        })
         .subscribe((status, err) => {
             if (status === 'SUBSCRIBED') {
                 updateNetworkStatusIndicator(true);
             } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
                 updateNetworkStatusIndicator(false);
-                // ব্রাউজার হ্যাং হওয়া রোধ করতে রিকানেক্ট টাইম ৩ সেকেন্ড (3000 ms) করা হলো
+                // ব্রাউজার হ্যাং হওয়া রোধ করতে রিকানেক্ট টাইম ৩ সেকেন্ড (3000 ms) করা হলো
                 setTimeout(() => {
                     if (document.visibilityState === 'visible') {
                         initSupabaseRealtime();
