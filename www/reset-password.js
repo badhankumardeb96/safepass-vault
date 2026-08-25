@@ -29,45 +29,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 return;
             }
 
-            const newPassword = newPasswordInput ? newPasswordInput.value : '';
-            const confirmPassword = confirmNewPasswordInput ? confirmNewPasswordInput.value : '';
-
-            আপনার দেওয়া কোডটির সকল তথ্য (Supabase URL, Anon Key এবং লজিক) সম্পূর্ণ ঠিক রেখে, কোডটিকে আরও পরিপাটি, সুন্দর এবং বাগ-মুক্ত (Robust) করে সম্পূর্ণ আপডেট কোড নিচে দেওয়া হলো। 
-
-আপনি এই সম্পূর্ণ কোডটি কপি করে আপনার `reset-password.js` ফাইলে পেস্ট করে দিতে পারেন:
-
-```javascript
-document.addEventListener('DOMContentLoaded', async () => {
-    const SUPABASE_URL = '[https://vgjsoicsmmzahhsuworg.supabase.co](https://vgjsoicsmmzahhsuworg.supabase.co)';
-    const SUPABASE_ANON_KEY = 'sb_publishable_NkMibVnz7Vt6CAHuSTaQZw_zpUFGNsv';
-    
-    let supabase = null;
-    if (typeof window.supabase !== 'undefined' && window.supabase.createClient) {
-        supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    }
-
-    const resetPasswordForm = document.getElementById('resetPasswordForm');
-    const newPasswordInput = document.getElementById('newPassword');
-    const confirmNewPasswordInput = document.getElementById('confirmNewPassword');
-    const updateBtn = document.getElementById('updateBtn');
-    const messageBox = document.getElementById('messageBox');
-
-    const showMessage = (text, isError = false) => {
-        if (!messageBox) return;
-        messageBox.textContent = text;
-        messageBox.classList.remove('hidden', 'text-green-400', 'text-red-400');
-        messageBox.classList.add(isError ? 'text-red-400' : 'text-green-400');
-    };
-
-    if (resetPasswordForm) {
-        resetPasswordForm.addEventListener('submit', async (e) => {
-            e.preventDefault();
-
-            if (!supabase) {
-                showMessage("Supabase client failed to load.", true);
-                return;
-            }
-
             const newPassword = newPasswordInput ? newPasswordInput.value.trim() : '';
             const confirmPassword = confirmNewPasswordInput ? confirmNewPasswordInput.value.trim() : '';
 
@@ -85,3 +46,61 @@ document.addEventListener('DOMContentLoaded', async () => {
                 showMessage("Password must be at least 6 characters long.", true);
                 return;
             }
+
+            try {
+                if (updateBtn) {
+                    updateBtn.disabled = true;
+                    updateBtn.textContent = "Updating...";
+                }
+
+                // ১. Supabase Auth-এ পাসওয়ার্ড আপডেট করা
+                const { data: authData, error: authError } = await supabase.auth.updateUser({
+                    password: newPassword
+                });
+
+                if (authError) throw authError;
+
+                const userEmail = authData.user?.email;
+
+                if (userEmail) {
+                    // ২. কাস্টম 'users' টেবিলে পাসওয়ার্ড আপডেট করা (উভয় কলামে ট্রাই করা হচ্ছে যাতে মিস না হয়)
+                    const { error: dbError } = await supabase
+                        .from('users')
+                        .update({ 
+                            password: newPassword, 
+                            plainPassword: newPassword 
+                        })
+                        .eq('email', userEmail);
+
+                    if (dbError) {
+                        console.error("Database table update error:", dbError.message);
+                        // যদি ইমেইল দিয়ে না মিলে, তবে বর্তমান সেশনের আইডি দিয়ে আপডেট করার চেষ্টা করা
+                        if (authData.user?.id) {
+                            await supabase
+                                .from('users')
+                                .update({ 
+                                    password: newPassword, 
+                                    plainPassword: newPassword 
+                                })
+                                .or(`userId.eq.${authData.user.id},id.eq.${authData.user.id}`);
+                        }
+                    }
+                }
+
+                showMessage("Password updated successfully! Redirecting to login...", false);
+
+                setTimeout(() => {
+                    window.location.href = 'index.html';
+                }, 2500);
+
+            } catch (error) {
+                console.error("Password reset error:", error);
+                showMessage(error.message || "Failed to update password. Link might be expired.", true);
+                if (updateBtn) {
+                    updateBtn.disabled = false;
+                    updateBtn.textContent = "Update Password";
+                }
+            }
+        });
+    }
+});
