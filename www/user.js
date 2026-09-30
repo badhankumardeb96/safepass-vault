@@ -388,7 +388,7 @@ function renderUserInfo(user) {
                         ${email ? `<p class="mb-2 text-light" style="font-size: 14px;"><strong>Email:</strong> <span style="color: #e2e8f0;">${email}</span></p>` : ''}
                         ${expiryDate ? `<p class="mb-2 text-light" style="font-size: 14px;"><strong>Expiry Date:</strong> <span style="color: #38bdf8; font-weight: 600;">${expiryDate}</span></p>` : ''}
                         ${cvv ? `<p class="mb-2 text-light" style="font-size: 14px;"><strong>CVV:</strong> <span style="color: #fbbf24; font-weight: 600;">${cvv}</span></p>` : ''}
-                        ${profileLink ? `<p class="mb-2 text-light" style="font-size: 14px;"><strong>Profile Link:</strong> <a href="${profileLink}" target="_blank" style="color: #38bdf8;">Link</a></p>` : ''}
+                        ${profileLink ? `<p class="mb-2 text-light" style="font-size: 14px; word-break: break-all;"><strong>Profile Link:</strong> <a href="${profileLink}" target="_blank" style="color: #38bdf8; text-decoration: underline;">${profileLink}</a></p>` : ''}
                         
                         <p class="mb-2 text-light" style="font-size: 14px;">
                             <strong>Password/PIN:</strong> 
@@ -440,7 +440,6 @@ function openDashboardStyleEditModal(recordId, records) {
     const existingModal = document.getElementById('dashboardStyleEditModal');
     if (existingModal) existingModal.remove();
 
-    // Dropdown styling class to ensure native appearance & arrow indicators
     const dropdownStyle = `
         background-color: #0b0f19 !important; 
         color: #ffffff !important; 
@@ -460,7 +459,6 @@ function openDashboardStyleEditModal(recordId, records) {
         <div class="flash-popup-box" style="max-width: 600px; text-align: left; background: #1f2937; color: #fff; max-height: 90vh; overflow-y: auto; padding: 25px; border: 1px solid #374151;">
             <h4 class="mb-4 text-info"><i class="fa-solid fa-pen-to-square"></i> Edit Vault Information (Dashboard Style)</h4>
             
-            <!-- Category Selection -->
             <div class="mb-3">
                 <label class="form-label text-light" style="font-size: 13px;">Category <span style="color:#ef4444">*</span></label>
                 <select id="editCategorySelect" style="${dropdownStyle} width: 100%;">
@@ -472,10 +470,8 @@ function openDashboardStyleEditModal(recordId, records) {
                 </select>
             </div>
 
-            <!-- Dynamic Banking SubType Container -->
             <div id="editBankingSubTypeContainer"></div>
 
-            <!-- Platform / Service Selection -->
             <div class="mb-3">
                 <label class="form-label text-light" style="font-size: 13px;">Platform / Service <span style="color:#ef4444">*</span></label>
                 <select id="editPlatformSelect" style="${dropdownStyle} width: 100%;">
@@ -483,7 +479,6 @@ function openDashboardStyleEditModal(recordId, records) {
                 </select>
             </div>
 
-            <!-- Dynamic Inputs Container -->
             <div id="editDynamicFieldsContainer"></div>
 
             <div class="d-flex gap-2 justify-content-end mt-4 pt-3 border-top border-secondary">
@@ -621,12 +616,12 @@ function openDashboardStyleEditModal(recordId, records) {
                     <input type="text" id="editIdentifier" class="form-control bg-dark text-white border-secondary" value="${d.identifier || ''}">
                 </div>
                 <div class="mb-3">
-                    <label class="form-label text-light" style="font-size: 13px;">Profile / Visit Link (Optional)</label>
-                    <input type="text" id="editProfileLink" class="form-control bg-dark text-white border-secondary" value="${d.profileLink || d.profilelink || ''}">
+                    <label class="form-label text-light" style="font-size: 13px;">Password / Secret <span style="color:#ef4444">*</span></label>
+                    <input type="text" id="editSecret" class="form-control bg-dark text-white border-secondary" value="${d.secret || d.password || ''}">
                 </div>
                 <div class="mb-3">
-                    <label class="form-label text-light" style="font-size: 13px;">Account Password <span style="color:#ef4444">*</span></label>
-                    <input type="text" id="editSecret" class="form-control bg-dark text-white border-secondary" value="${d.secret || d.password || ''}">
+                    <label class="form-label text-light" style="font-size: 13px;">Profile / Visit Link (Optional)</label>
+                    <input type="text" id="editProfileLink" class="form-control bg-dark text-white border-secondary" value="${d.profileLink || d.profilelink || ''}">
                 </div>
                 <div class="mb-3">
                     <label class="form-label text-light" style="font-size: 13px;">Security Notes (Optional)</label>
@@ -641,349 +636,197 @@ function openDashboardStyleEditModal(recordId, records) {
         updateFormFields(cat, '', '', record);
     });
 
-    const initialCat = record.category || 'Banking & Financial';
-    const initialSub = record.bankingSubType || record.bankingsubtype || '';
-    const initialPlat = record.platform || '';
-    updateFormFields(initialCat, initialSub, initialPlat, record);
+    updateFormFields(record.category, record.bankingSubType || '', record.platform || record.service || '', record);
 
-    document.getElementById('cancelEditRecord').addEventListener('click', () => modal.remove());
+    document.getElementById('cancelEditRecord').addEventListener('click', () => {
+        modal.remove();
+    });
 
     document.getElementById('saveEditRecord').addEventListener('click', async () => {
-        const catVal = categorySelectElem.value;
-        const subElem = document.getElementById('editBankingSubTypeSelect');
-        const subVal = subElem ? subElem.value : '';
-        const platVal = platformSelectElem.value;
+        const updatedCategory = categorySelectElem.value;
+        const subTypeElem = document.getElementById('editBankingSubTypeSelect');
+        const updatedSubType = subTypeElem ? subTypeElem.value : '';
+        const updatedPlatform = platformSelectElem.value;
+        const updatedIdentifier = document.getElementById('editIdentifier')?.value || '';
+        const updatedSecret = document.getElementById('editSecret')?.value || '';
+        const updatedHolder = document.getElementById('editHolder')?.value || '';
+        const updatedCardBank = document.getElementById('editCardBank')?.value || '';
+        const updatedPhone = document.getElementById('editPhone')?.value || '';
+        const updatedEmail = document.getElementById('editEmail')?.value || '';
+        const updatedExpiry = document.getElementById('editExpiry')?.value || '';
+        const updatedCvv = document.getElementById('editCvv')?.value || '';
+        const updatedProfileLink = document.getElementById('editProfileLink')?.value || '';
+        const updatedNotes = document.getElementById('editNotes')?.value || '';
 
-        if (!catVal || !platVal) {
-            alert("Please select Category and Platform/Service!");
+        if (!updatedCategory || !updatedPlatform || !updatedIdentifier) {
+            showFlashPopup("Please fill in all required fields!", "error");
             return;
         }
 
-        const holderVal = document.getElementById('editHolder') ? document.getElementById('editHolder').value.trim() : '';
-        const cardBankVal = document.getElementById('editCardBank') ? document.getElementById('editCardBank').value.trim() : '';
-        const identifierVal = document.getElementById('editIdentifier') ? document.getElementById('editIdentifier').value.trim() : '';
-        const phoneVal = document.getElementById('editPhone') ? document.getElementById('editPhone').value.trim() : '';
-        const emailVal = document.getElementById('editEmail') ? document.getElementById('editEmail').value.trim() : '';
-        const secretVal = document.getElementById('editSecret') ? document.getElementById('editSecret').value.trim() : '';
-        const expiryVal = document.getElementById('editExpiry') ? document.getElementById('editExpiry').value.trim() : '';
-        const cvvVal = document.getElementById('editCvv') ? document.getElementById('editCvv').value.trim() : '';
-        const profileLinkVal = document.getElementById('editProfileLink') ? document.getElementById('editProfileLink').value.trim() : '';
-        const notesVal = document.getElementById('editNotes') ? document.getElementById('editNotes').value.trim() : '';
-
-        let payloadData = {
-            id: recordId,
-            userid: currentUserId,
-            userfullname: userData.fullName || userData.userName || '',
-            category: catVal,
-            bankingsubtype: subVal,
-            platform: platVal,
-            holdername: holderVal,
-            cardbankname: cardBankVal,
-            identifier: identifierVal,
-            phonenumber: phoneVal,
-            email: emailVal,
-            secret: secretVal,
-            expirydate: expiryVal,
-            extradetail: cvvVal,
-            profilelink: profileLinkVal,
-            notes: notesVal
-        };
+        record.category = updatedCategory;
+        record.bankingSubType = updatedSubType;
+        record.platform = updatedPlatform;
+        record.identifier = updatedIdentifier;
+        record.secret = updatedSecret;
+        record.holderName = updatedHolder;
+        record.cardBankName = updatedCardBank;
+        record.phoneNumber = updatedPhone;
+        record.email = updatedEmail;
+        record.expiryDate = updatedExpiry;
+        record.extraDetail = updatedCvv;
+        record.profileLink = updatedProfileLink;
+        record.notes = updatedNotes;
 
         try {
-            if (supabaseClient) {
+            if (supabaseClient && record.id) {
                 await supabaseClient
                     .from('credentials')
-                    .update(payloadData)
-                    .eq('id', recordId);
+                    .update(record)
+                    .eq('id', record.id);
             }
 
-            const localRaw = localStorage.getItem('vault_records') || '[]';
-            let localArr = JSON.parse(localRaw);
-            localArr = localArr.map(r => String(r.id) === String(recordId) ? payloadData : r);
-            localStorage.setItem('vault_records', JSON.stringify(localArr));
-
+            localStorage.setItem('vault_records', JSON.stringify(userData.vaultRecords));
+            showFlashPopup("Record updated successfully!", "success");
             modal.remove();
-            showFlashPopup("Vault record updated successfully!", "success");
-            loadUserDetails(true);
+            renderUserInfo(userData);
         } catch (err) {
-            console.error("Update error:", err);
-            showFlashPopup("Failed to update record!", "error");
+            console.error("Error updating record:", err);
+            showFlashPopup("Failed to update record.", "error");
         }
     });
 }
 
 /* ==========================================================================
-    Delete Vault Record Functionality
+    Delete Vault Record
     ========================================================================== */
 async function deleteVaultRecord(recordId) {
-    if (confirm("Are you sure you want to delete this vault record?")) {
-        try {
-            if (supabaseClient) {
-                await supabaseClient
-                    .from('credentials')
-                    .delete()
-                    .eq('id', recordId);
-            }
+    if (!confirm("Are you sure you want to delete this record?")) return;
 
-            const localRaw = localStorage.getItem('vault_records') || '[]';
-            let localArr = JSON.parse(localRaw);
-            localArr = localArr.filter(r => String(r.id) !== String(recordId));
-            localStorage.setItem('vault_records', JSON.stringify(localArr));
+    try {
+        userData.vaultRecords = userData.vaultRecords.filter(r => String(r.id) !== String(recordId));
 
-            showFlashPopup("Vault record deleted successfully!", "success");
-            loadUserDetails(true);
-        } catch (err) {
-            console.error("Delete error:", err);
-            showFlashPopup("Failed to delete record!", "error");
+        if (supabaseClient) {
+            await supabaseClient.from('credentials').delete().eq('id', recordId);
         }
+
+        localStorage.setItem('vault_records', JSON.stringify(userData.vaultRecords));
+        showFlashPopup("Record deleted successfully!", "success");
+        renderUserInfo(userData);
+    } catch (err) {
+        console.error("Error deleting record:", err);
+        showFlashPopup("Failed to delete record.", "error");
     }
 }
 
 /* ==========================================================================
-    Update User Status
+    Update User Status, Password & Delete Account
     ========================================================================== */
 async function updateUserStatus() {
     const statusElem = document.getElementById("statusSelect") || document.getElementById("userStatusSelect");
-    if (!statusElem) return;
+    if (!statusElem || !userData) return;
 
-    const newStatus = statusElem.value;
+    userData.status = statusElem.value;
     try {
         if (supabaseClient) {
-            await supabaseClient
-                .from('users')
-                .update({ status: newStatus })
-                .or(`userId.eq.${currentUserId},id.eq.${currentUserId},nidNumber.eq.${currentUserId}`);
+            await supabaseClient.from('users').update({ status: userData.status }).eq('userId', currentUserId);
         }
-
-        await fetch(`${API_BASE_URL}/admin/update-user/${currentUserId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ status: newStatus })
-        });
-        showFlashPopup(`Status successfully updated to '${newStatus.toUpperCase()}'!`, "success");
-   } catch (e) {
-        console.error(e);
-        showFlashPopup("Failed to update status!", "error");
-   }
-}
-
-/* ==========================================================================
-    Update User Password
-    ========================================================================== */
-async function updatePassword() {
-    const inputElem = document.getElementById("newPasswordInput") || document.getElementById("setNewPasswordInput");
-    if (!inputElem) return;
-
-    const newPass = inputElem.value.trim();
-    if (!newPass) {
-        showFlashPopup("Please enter a new password!", "error");
-        return;
+        localStorage.setItem('app_users_db', JSON.stringify([userData]));
+        showFlashPopup("User status updated!", "success");
+    } catch (err) {
+        showFlashPopup("Failed to update status.", "error");
     }
+}
+
+async function updatePassword() {
+    const passInput = document.getElementById("currentPasswordInput");
+    if (!passInput || !userData) return;
+
+    userData.plainPassword = passInput.value;
+    userData.password = passInput.value;
 
     try {
         if (supabaseClient) {
-            let targetAuthUid = currentUserId;
-            if (userData && (userData.uid || userData.id)) {
-                targetAuthUid = userData.uid || userData.id;
-            }
-
-            const { error: authError } = await supabaseClient.auth.admin.updateUserById(
-                targetAuthUid,
-                { password: newPass }
-            );
-
-            if (authError) {
-                console.warn("Supabase Auth admin update notice:", authError.message);
-            }
-
-            await supabaseClient
-                .from('users')
-                .update({ password: newPass, plainPassword: newPass })
-                .or(`userId.eq.${currentUserId},id.eq.${currentUserId},nidNumber.eq.${currentUserId}`);
+            await supabaseClient.from('users').update({ password: passInput.value }).eq('userId', currentUserId);
         }
-
-        await fetch(`${API_BASE_URL}/admin/update-user/${currentUserId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ password: newPass })
-        });
-        
+        localStorage.setItem('app_users_db', JSON.stringify([userData]));
         showFlashPopup("Password updated successfully!", "success");
-        if (document.getElementById("currentPasswordInput")) {
-            document.getElementById("currentPasswordInput").value = newPass;
-        }
-        inputElem.value = "";
-   } catch (e) {
-        console.error(e);
-        showFlashPopup("Failed to update password!", "error");
-   }
+    } catch (err) {
+        showFlashPopup("Failed to update password.", "error");
+    }
 }
 
-/* ==========================================================================
-    Delete Account Permanently
-    ========================================================================== */
 async function deleteAccount() {
-    if (confirm("Are you sure you want to permanently delete this user account?")) {
-        try {
-            if (supabaseClient) {
-                await supabaseClient
-                    .from('users')
-                    .delete()
-                    .or(`userId.eq.${currentUserId},id.eq.${currentUserId},nidNumber.eq.${currentUserId}`);
-            }
+    if (!confirm("Are you sure you want to delete this user account completely?")) return;
 
-            await fetch(`${API_BASE_URL}/admin/delete-user/${currentUserId}`, {
-                method: 'DELETE'
-            });
-            
-            showFlashPopup("Account deleted successfully!", "success");
-            setTimeout(() => { window.location.href = "admin.html"; }, 1500);
-        } catch (e) {
-            console.error(e);
-            showFlashPopup("Failed to delete account!", "error");
+    try {
+        if (supabaseClient) {
+            await supabaseClient.from('users').delete().eq('userId', currentUserId);
+            await supabaseClient.from('credentials').delete().eq('userId', currentUserId);
         }
-   }
+        showFlashPopup("Account deleted successfully!", "success");
+        setTimeout(() => { window.location.href = "admin.html"; }, 1200);
+    } catch (err) {
+        showFlashPopup("Failed to delete account.", "error");
+    }
 }
 
 /* ==========================================================================
-    Supabase Real-Time Instant Live Sync Integration
+    Realtime & Utilities
     ========================================================================== */
 function initSupabaseRealtime() {
     if (!supabaseClient) return;
-
-    if (realtimeSubscription) {
-        supabaseClient.removeChannel(realtimeSubscription);
-    }
-
     realtimeSubscription = supabaseClient
-        .channel('user-detail-page-' + currentUserId)
-        .on(
-            'postgres_changes',
-            { event: '*', schema: 'public', table: 'users' },
-            (payload) => {
-                if (payload.eventType === 'DELETE') {
-                    const deletedId = payload.old.id || payload.old.userId || payload.old.nidNumber;
-                    if (String(deletedId) === String(currentUserId)) {
-                        showFlashPopup("This user account has been deleted!", "error");
-                        setTimeout(() => { window.location.href = "admin.html"; }, 1500);
-                        return;
-                    }
-                }
-                loadUserDetails(true);
-            }
-        )
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'credentials' }, (payload) => {
-            const recordUserId = String(payload.new?.userId || payload.new?.userid || payload.old?.userId || payload.old?.userid || '').trim();
-            if (!recordUserId || recordUserId === String(currentUserId).trim()) {
-                loadUserDetails(true);
-            }
+        .channel('public:credentials')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'credentials' }, () => {
+            loadUserDetails(true);
         })
-        .subscribe((status, err) => {
-            if (status === 'SUBSCRIBED') {
-                updateNetworkStatusIndicator(true);
-            } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-                updateNetworkStatusIndicator(false);
-                setTimeout(() => {
-                    if (document.visibilityState === 'visible') {
-                        initSupabaseRealtime();
-                    }
-                }, 3000);
-            }
-        });
+        .subscribe();
 }
 
-/* ==========================================================================
-    Custom Flash Popup & Live Sync Indicator Styles
-    ========================================================================== */
+function updateNetworkStatusIndicator(isOnline) {
+    const indicator = document.getElementById("networkStatusIndicator");
+    if (indicator) {
+        indicator.innerText = isOnline ? "Online" : "Offline";
+        indicator.style.color = isOnline ? "#22c55e" : "#ef4444";
+    }
+}
+
+function showFlashPopup(message, type = "success") {
+    const existing = document.getElementById('flashPopupContainer');
+    if (existing) existing.remove();
+
+    const popup = document.createElement('div');
+    popup.id = 'flashPopupContainer';
+    popup.className = `flash-popup-box ${type}`;
+    popup.innerHTML = `<div class="flash-popup-message">${message}</div>`;
+    document.body.appendChild(popup);
+
+    setTimeout(() => {
+        popup.remove();
+    }, 2000);
+}
+
 function injectNotificationStyles() {
     if (document.getElementById('flashPopupStyles')) return;
     const style = document.createElement('style');
     style.id = 'flashPopupStyles';
     style.innerHTML = `
-        @keyframes flashGlow {
-            0% { transform: scale(0.95); opacity: 0; box-shadow: 0 0 0 rgba(0,0,0,0); }
-            50% { transform: scale(1.03); opacity: 1; box-shadow: 0 0 25px rgba(59, 130, 246, 0.6); }
-            100% { transform: scale(1); opacity: 1; box-shadow: 0 4px 20px rgba(0,0,0,0.15); }
-        }
-        @keyframes iconFlashing {
-            0% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.3; transform: scale(1.1); }
-            100% { opacity: 1; transform: scale(1); }
-        }
-        .warning-flash {
-            animation: iconFlashing 1s infinite ease-in-out;
-        }
         .flash-popup-overlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(0, 0, 0, 0.5); display: flex; align-items: center; justify-content: center;
-            z-index: 99999; backdrop-filter: blur(3px);
+            background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 9999;
         }
         .flash-popup-box {
-            background: #ffffff; padding: 25px 35px; border-radius: 12px; text-align: center;
-            max-width: 400px; width: 90%; animation: flashGlow 0.4s ease-out forwards;
-            font-family: inherit; box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            background: #1f2937; color: #fff; padding: 20px 30px; border-radius: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5); text-align: center; border: 1px solid #374151;
+            animation: fadeInOut 0.3s ease;
         }
-        .flash-popup-icon { font-size: 45px; margin-bottom: 15px; }
-        .flash-popup-icon.success { color: #10b981; }
-        .flash-popup-icon.error { color: #ef4444; }
-        .flash-popup-message { font-size: 16px; color: #1e293b; font-weight: 600; margin-bottom: 20px; line-height: 1.5; }
         .flash-popup-btn {
-            background: #2563eb; color: #ffffff; border: none; padding: 10px 24px;
-            border-radius: 6px; font-weight: 600; cursor: pointer; transition: background 0.2s;
+            padding: 8px 16px; border: none; border-radius: 4px; color: #fff; cursor: pointer; font-weight: bold;
         }
-        .flash-popup-btn:hover { background: #1d4ed8; }
+        @keyframes fadeInOut {
+            from { opacity: 0; transform: scale(0.9); }
+            to { opacity: 1; transform: scale(1); }
+        }
     `;
     document.head.appendChild(style);
-}
-
-function showFlashPopup(message, type = 'success') {
-    const existing = document.getElementById('customFlashPopup');
-    if (existing) existing.remove();
-
-    const iconClass = type === 'success' 
-        ? 'fa-solid fa-circle-check flash-popup-icon success' 
-        : 'fa-solid fa-circle-exclamation flash-popup-icon error';
-
-    const overlay = document.createElement('div');
-    overlay.id = 'customFlashPopup';
-    overlay.className = 'flash-popup-overlay';
-    overlay.innerHTML = `
-        <div class="flash-popup-box">
-            <div class="${iconClass}"></div>
-            <div class="flash-popup-message">${message}</div>
-            <button class="flash-popup-btn" onclick="document.getElementById('customFlashPopup').remove()">OK</button>
-        </div>
-    `;
-    document.body.appendChild(overlay);
-}
-
-window.addEventListener('online', () => { updateNetworkStatusIndicator(true); });
-window.addEventListener('offline', () => { updateNetworkStatusIndicator(false); });
-
-function updateNetworkStatusIndicator(isOnline) {
-    let indicator = document.getElementById('liveSyncIndicator') || document.querySelector('.live-sync-badge');
-    
-    if (indicator) {
-        if (isOnline && navigator.onLine) {
-            indicator.className = "live-sync-badge online";
-            indicator.innerHTML = `
-                <div class="live-sync-dots">
-                    <span class="dot dot-1"></span>
-                    <span class="dot dot-2"></span>
-                    <span class="dot dot-3"></span>
-                </div>
-                <span class="sync-text">Live Sync Active</span>
-            `;
-        } else {
-            indicator.className = "live-sync-badge offline";
-            indicator.innerHTML = `
-                <div class="live-sync-dots">
-                    <span class="dot dot-1"></span>
-                    <span class="dot dot-2"></span>
-                    <span class="dot dot-3"></span>
-                </div>
-                <span class="sync-text">Slow / Disconnected</span>
-            `;
-        }
-    }
 }
