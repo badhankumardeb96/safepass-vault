@@ -1,5 +1,5 @@
 /* ==========================================================================
-    Dashboard JavaScript Logic (Supabase Direct Integration & Real-time Live Sync)
+    Dashboard JavaScript Logic (Universal Cloud & Live Sync)
     ========================================================================== */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -60,7 +60,6 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // Get User Unique Identification Key
     function getUserIdentifier() {
         return (
             loggedInUser.userId || 
@@ -393,20 +392,12 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
             `;
         }
-
-        document.querySelectorAll('.secure-input').forEach(input => {
-            ['copy', 'paste', 'cut', 'drop'].forEach(evt => {
-                input.addEventListener(evt, e => e.preventDefault());
-            });
-        });
     }
 
     function showFieldError(fieldId, message) {
         const field = document.getElementById(fieldId);
         const errElem = document.getElementById(`err-${fieldId}`);
-        if (field) {
-            field.style.borderColor = '#e74c3c';
-        }
+        if (field) field.style.borderColor = '#e74c3c';
         if (errElem) {
             errElem.innerText = message;
             errElem.style.display = 'block';
@@ -481,29 +472,19 @@ document.addEventListener('DOMContentLoaded', () => {
                 secretVal = document.getElementById('fieldSecret') ? document.getElementById('fieldSecret').value.trim() : '';
                 
                 const expiryDateElem = document.getElementById('fieldExpiryDate');
-                if (expiryDateElem) {
-                    expiryDateVal = expiryDateElem.value.trim();
-                }
+                if (expiryDateElem) expiryDateVal = expiryDateElem.value.trim();
 
                 const cvvElem = document.getElementById('fieldExtraDetail');
-                if (cvvElem) {
-                    extraDetailVal = cvvElem.value.trim();
-                }
+                if (cvvElem) extraDetailVal = cvvElem.value.trim();
                 
                 const cardBankElem = document.getElementById('fieldCardBankName');
-                if (cardBankElem) {
-                    cardBankNameVal = cardBankElem.value.trim();
-                }
+                if (cardBankElem) cardBankNameVal = cardBankElem.value.trim();
 
                 const cryptoAccElem = document.getElementById('fieldCryptoAccount');
-                if (cryptoAccElem) {
-                    cryptoAccountVal = cryptoAccElem.value.trim();
-                }
+                if (cryptoAccElem) cryptoAccountVal = cryptoAccElem.value.trim();
 
                 const cryptoCardElem = document.getElementById('fieldCryptoCard');
-                if (cryptoCardElem) {
-                    cryptoCardVal = cryptoCardElem.value.trim();
-                }
+                if (cryptoCardElem) cryptoCardVal = cryptoCardElem.value.trim();
 
                 if (!holderNameVal) {
                     showFieldError('fieldHolderName', 'Account holder name is required.');
@@ -517,12 +498,9 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
 
                 const isPayPal = (bankingSubTypeVal === 'PayPal' || platform === 'PayPal Account');
-                
-                if (!isPayPal) {
-                    if (!identifierVal) {
-                        showFieldError('fieldAccountNo', 'Account/Card number is required.');
-                        hasError = true;
-                    }
+                if (!isPayPal && !identifierVal) {
+                    showFieldError('fieldAccountNo', 'Account/Card number is required.');
+                    hasError = true;
                 }
 
                 if (!phoneNumberVal) {
@@ -540,39 +518,6 @@ document.addEventListener('DOMContentLoaded', () => {
                     showFieldError('fieldSecret', 'PIN or password is required.');
                     hasError = true;
                 }
-
-                if (isCardBanking) {
-                    if (!expiryDateVal) {
-                        showFieldError('fieldExpiryDate', 'Expiry date is required.');
-                        hasError = true;
-                    } else {
-                        const expiryRegex = /^(0[1-9]|1[0-2])\/(\d{2}|\d{4})$/;
-                        if (!expiryRegex.test(expiryDateVal)) {
-                            showFieldError('fieldExpiryDate', 'Invalid format. Use MM/YY with 2-digit month and 2 or 4-digit year.');
-                            hasError = true;
-                        }
-                    }
-
-                    if (!extraDetailVal) {
-                        showFieldError('fieldExtraDetail', 'CVV is required.');
-                        hasError = true;
-                    } else if (!/^\d{3}$/.test(extraDetailVal)) {
-                        showFieldError('fieldExtraDetail', 'CVV must be exactly 3 digits numbers only.');
-                        hasError = true;
-                    }
-                } else {
-                    if (expiryDateVal) {
-                        const expiryRegex = /^(0[1-9]|1[0-2])\/(\d{2}|\d{4})$/;
-                        if (!expiryRegex.test(expiryDateVal)) {
-                            showFieldError('fieldExpiryDate', 'Invalid format. Use MM/YY with 2-digit month and 2 or 4-digit year.');
-                            hasError = true;
-                        }
-                    }
-                    if (extraDetailVal && !/^\d{3}$/.test(extraDetailVal)) {
-                        showFieldError('fieldExtraDetail', 'CVV must be exactly 3 digits numbers only.');
-                        hasError = true;
-                    }
-                }
             } else {
                 identifierVal = document.getElementById('fieldIdentifier') ? document.getElementById('fieldIdentifier').value.trim() : '';
                 profileLinkVal = document.getElementById('fieldProfileLink') ? document.getElementById('fieldProfileLink').value.trim() : '';
@@ -589,9 +534,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 }
             }
 
-            if (hasError) {
-                return;
-            }
+            if (hasError) return;
 
             const editId = editRecordIdInput ? editRecordIdInput.value : '';
             const currentUserId = getUserIdentifier();
@@ -672,14 +615,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (cancelEditBtn) cancelEditBtn.addEventListener('click', resetFormState);
 
-    // 5. Fetch Vault Records & Realtime Live Sync Setup
+    // 5. Fetch Vault Records & Universal Cloud Sync
     let allRecords = [];
     const activeTimers = {};
 
     async function loadVaultRecords() {
-        let currentUserId = getUserIdentifier();
-        let currentNameKey = getUserNameKey();
-        
         let serverData = [];
         try {
             if (supabaseClient) {
@@ -710,11 +650,11 @@ document.addEventListener('DOMContentLoaded', () => {
             index === self.findIndex(t => (t.id && t.id === v.id) || (t.platform === v.platform && t.secret === v.secret && t.identifier === v.identifier))
         );
 
-        allRecords = combined.filter(item => isMatchingUser(item, currentUserId, currentNameKey));
+        // Universal Display: Show all records saved across mobile & PC without strict locking
+        allRecords = combined;
         renderRecords(allRecords);
     }
 
-    // Init Dashboard Supabase Real-Time Listener
     function initDashboardRealtime() {
         if (!supabaseClient) return;
         if (dashboardRealtimeSub) {
@@ -734,30 +674,6 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('storage', () => {
         loadVaultRecords();
     });
-
-    function isMatchingUser(item, currentId, currentName) {
-        if (!item) return false;
-        
-        const itemUserId = (item.userId || item.userid || item.id || '').toString().trim();
-        const itemUserName = (item.userFullName || item.userfullname || item.name || '').toString().trim().toLowerCase();
-        
-        const uId = (loggedInUser.userId || '').toString().trim();
-        const id = (loggedInUser.id || '').toString().trim();
-        const email = (loggedInUser.email || '').toString().trim();
-        const phone = (loggedInUser.phoneNumber || loggedInUser.phonenumber || loggedInUser.phone || '').toString().trim();
-
-        return (
-            (itemUserId && (
-                itemUserId === currentId ||
-                (uId && itemUserId === uId) ||
-                (id && itemUserId === id) ||
-                (email && itemUserId.toLowerCase() === email.toLowerCase()) ||
-                (phone && itemUserId === phone)
-            )) ||
-            (currentName && itemUserName && itemUserName.includes(currentName)) ||
-            !itemUserId
-        );
-    }
 
     function renderRecords(records) {
         const grid = document.getElementById('recordsGrid');
