@@ -1,5 +1,5 @@
 /* ==========================================================================
-    User Details & Admin Control Logic (user.js) - Instant Live Sync & Logout
+    User Details & Admin Control Logic (user.js) - Instant Live Sync, Styled Dynamic Edit Modal & Delete
     ========================================================================== */
 
 // Supabase Configuration
@@ -22,7 +22,36 @@ let currentUserId = null;
 let userData = null;
 let realtimeSubscription = null;
 
-// DOM লোড হলে URL থেকে User ID সংগ্রহ করে প্রসেস শুরু করা
+// Category & Service Options mapping for Dynamic Edit Modal
+const serviceOptions = {
+    'Social Media': [
+        'Facebook', 'Instagram', 'Twitter (X)', 'WhatsApp', 
+        'LinkedIn', 'TikTok', 'YouTube', 'Other Social Media'
+    ],
+    'Email & Messaging': [
+        'Gmail / Google', 'Outlook / Hotmail', 'Yahoo Mail', 'Telegram'
+    ],
+    'Other Accounts': [
+        'Website Membership', 'Wi-Fi Network', 'Software License', 'Custom Note'
+    ]
+};
+
+const bankingSubTypes = ['Mobile Banking', 'Internet Banking', 'Card Banking', 'Crypto Wallet', 'PayPal'];
+
+const bankingPlatformOptions = {
+    'Mobile Banking': ['bKash', 'Nagad', 'Rocket', 'Upay', 'CellFin', 'Tap', 'Other Mobile Wallet'],
+    'Internet Banking': [
+        'Islami Bank Bangladesh', 'Dutch-Bangla Bank (DBBL)', 'BRAC Bank', 
+        'The City Bank', 'Eastern Bank (EBL)', 'Sonali Bank', 'Janata Bank', 
+        'Agrani Bank', 'Pubali Bank', 'United Commercial Bank (UCB)', 
+        'Mutual Trust Bank (MTB)', 'Standard Chartered Bank', 'HSBC', 'Other Bank'
+    ],
+    'Card Banking': ['Visa Card', 'Master Card', 'Debit Card', 'Credit Card', 'Gift Card', 'Other Card'],
+    'Crypto Wallet': ['Binance', 'Coinbase', 'Trust Wallet', 'MetaMask', 'Other Crypto'],
+    'PayPal': ['PayPal Account']
+};
+
+// DOM load hole URL theke User ID songroho kore process shuru kora
 document.addEventListener("DOMContentLoaded", () => {
     const urlParams = new URLSearchParams(window.location.search);
     currentUserId = urlParams.get('id') || urlParams.get('userId');
@@ -35,21 +64,21 @@ document.addEventListener("DOMContentLoaded", () => {
 
     injectNotificationStyles();
 
-    // ১. প্রাথমিক ডাটা ফেচ করা
+    // 1. Prothom data fetch kora
     loadUserDetails();
 
-    // ২. ইভেন্ট লিসেনার যুক্ত করা
+    // 2. Event listener jukto kora
     setupEventListeners();
 
-    // ৩. Supabase রিয়েল-টাইম লাইভ আপডেটের জন্য ইনস্ট্যান্ট কানেকশন সেটআপ
+    // 3. Supabase real-time live update-er jonno instant connection setup
     initSupabaseRealtime();
 
-    // ৪. লোকাল স্টোরেজ লাইভ সিঙ্ক লিসেনার
+    // 4. Local storage live sync listener
     window.addEventListener('storage', () => {
         loadUserDetails(true);
     });
 
-    // ৫. পেজ লোডের সময় নেটওয়ার্ক স্ট্যাটাস চেক
+    // 5. Page load-er somoy network status check
     updateNetworkStatusIndicator(navigator.onLine);
 });
 
@@ -72,7 +101,6 @@ function setupEventListeners() {
         deleteAccBtn.addEventListener("click", deleteAccount);
     }
 
-    // Logout Button Event Listener
     const logoutBtn = document.getElementById("logoutBtn");
     if (logoutBtn) {
         logoutBtn.addEventListener("click", handleLogout);
@@ -80,7 +108,7 @@ function setupEventListeners() {
 }
 
 /* ==========================================================================
-    Handle Logout Function (Redirects to admin-login.html and clears session)
+    Handle Logout Function
     ========================================================================== */
 function handleLogout() {
     const existing = document.getElementById('customLogoutPopup');
@@ -102,7 +130,6 @@ function handleLogout() {
     document.body.appendChild(overlay);
 
     document.getElementById('confirmLogoutYes').addEventListener('click', () => {
-        // Clear all login and session storage data
         localStorage.removeItem('admin_session');
         localStorage.removeItem('current_admin');
         localStorage.removeItem('isLoggedIn');
@@ -123,7 +150,7 @@ function handleLogout() {
 }
 
 /* ==========================================================================
-    Load User Information & Vault Records (Fixed Filter for Supabase 'credentials' table)
+    Load User Information & Vault Records
     ========================================================================== */
 async function loadUserDetails(isSilent = false) {
     try {
@@ -156,9 +183,9 @@ async function loadUserDetails(isSilent = false) {
         const targetCleanId = String(currentUserId).trim();
         
         userData = allUsers.find(u => {
-            const uId = String(u.userId || u.id || '').trim();
+            const uId = String(u.userId || u.userid || u.id || '').trim();
             const uNid = String(u.nidNumber || u.nid || '').trim();
-            const uPhone = String(u.phoneNumber || u.phone || '').trim();
+            const uPhone = String(u.phoneNumber || u.phonenumber || u.phone || '').trim();
             return uId === targetCleanId || uNid === targetCleanId || uPhone === targetCleanId;
         });
 
@@ -169,21 +196,22 @@ async function loadUserDetails(isSilent = false) {
                 email: "N/A",
                 phoneNumber: "N/A",
                 status: "active"
-          };
+            };
         }
 
         let rawVaultData = [];
 
         if (supabaseClient) {
              try {
-                 // আপনার Supabase ডাটাবেজের সঠিক টেবিল 'credentials' এবং সঠিক কলাম 'userId' ব্যবহার করা হলো
                  const { data: vData, error } = await supabaseClient
                      .from('credentials')
-                     .select('*')
-                     .eq('userId', targetCleanId);
+                     .select('*');
 
                  if (!error && vData) {
-                     rawVaultData = vData;
+                     rawVaultData = vData.filter(item => {
+                         const itemUid = String(item.userId || item.userid || item.id || '').trim();
+                         return itemUid === targetCleanId || itemUid === String(userData.fullName || '').toLowerCase();
+                     });
                  }
              } catch (e) {
                  console.error("Supabase credentials fetch error:", e);
@@ -204,16 +232,13 @@ async function loadUserDetails(isSilent = false) {
                           const vParsed = JSON.parse(vRaw);
                           if (Array.isArray(vParsed)) {
                               vParsed.forEach(lv => {
-                                  const lvUid = String(lv.userId || lv.user_id || lv.uid || '').trim();
-                                  if (lvUid === targetCleanId) {
+                                  const lvUid = String(lv.userId || lv.userid || lv.user_id || lv.uid || '').trim();
+                                  if (lvUid === targetCleanId || !lvUid) {
                                       rawVaultData.push(lv);
                                   }
                               });
                           } else if (vParsed && typeof vParsed === 'object') {
-                              const lvUid = String(vParsed.userId || vParsed.user_id || vParsed.uid || '').trim();
-                              if (lvUid === targetCleanId) {
-                                  rawVaultData.push(vParsed);
-                              }
+                              rawVaultData.push(vParsed);
                           }
                       } catch(e) {}
                   }
@@ -222,7 +247,7 @@ async function loadUserDetails(isSilent = false) {
 
         const uniqueVaultMap = new Map();
         rawVaultData.forEach(item => {
-            const uniqueKey = item.id || `${item.platform || item.service || 'p'}_${item.identifier || item.username || item.email || 'u'}_${item.password || item.secret || 's'}`;
+            const uniqueKey = item.id || `${item.platform || item.service || 'p'}_${item.identifier || item.username || item.email || 'u'}_${item.secret || item.password || 's'}`;
             if (!uniqueVaultMap.has(uniqueKey)) {
                 uniqueVaultMap.set(uniqueKey, item);
             }
@@ -242,7 +267,7 @@ async function loadUserDetails(isSilent = false) {
 }
 
 /* ==========================================================================
-    Render User Information to UI
+    Render User Information & Vault Cards with Edit & Delete Options
     ========================================================================== */
 function renderUserInfo(user) {
     if (!user) return;
@@ -286,7 +311,7 @@ function renderUserInfo(user) {
 
     const nidVal = user.nidNumber || user.nid || user.nidNo || user.nationalId || user.nid_number || "N/A";
     const emailVal = user.email || user.userEmail || user.mail || user.emailAddress || "N/A";
-    const phoneVal = user.phoneNumber || user.phone || user.mobile || user.contact || user.phone_number || "N/A";
+    const phoneVal = user.phoneNumber || user.phonenumber || user.phone || user.mobile || user.contact || "N/A";
     const genderVal = user.gender || user.sex || "N/A";
     const dobVal = user.dob || user.dateOfBirth || user.birthDate || user.birthday || user.date_of_birth || "N/A";
     const bloodVal = user.bloodGroup || user.blood || user.bg || user.blood_group || "N/A";
@@ -328,40 +353,390 @@ function renderUserInfo(user) {
         vaultContainer.innerHTML = `<div class="col-12 text-light text-center py-4 fs-5">No saved vault records found for this user.</div>`;
     } else {
         records.forEach((item) => {
-            const category = item.category || item.type || 'BANKING & FINANCIAL';
-            const platform = item.platform || item.service || item.accountType || item.title || item.siteName || 'Pubali Bank';
-            const holder = item.holderName || item.holder || item.accountHolder || '';
-            const username = item.identifier || item.username || item.email || item.phone || item.user || 'N/A';
-            const pass = item.secret || item.password || item.pin || item.pass || '••••••••';
-            
-            const extra = item.extraDetail || item.extra || item.extraField || item.additional || item.branch || item.cvv || item.extraInfo || item.subInfo || item.accNo || item.accountNumber || item.routingNumber || item.extra_info || '';
+            const recordId = item.id || item._id || '';
+            const category = item.category || item.type || 'GENERAL';
+            const subType = item.bankingSubType || item.bankingsubtype || '';
+            const platform = item.platform || item.service || item.accountType || item.title || item.siteName || 'Account';
+            const holder = item.holderName || item.holdername || item.holder || '';
+            const cardBank = item.cardBankName || item.cardbankname || '';
+            const identifier = item.identifier || item.username || item.email || item.phone || 'N/A';
+            const phoneNumber = item.phoneNumber || item.phonenumber || '';
+            const email = item.email || '';
+            const expiryDate = item.expiryDate || item.expirydate || '';
+            const pass = item.secret || item.password || item.pin || '••••••••';
+            const cvv = item.extraDetail || item.extradetail || item.cvv || '';
+            const profileLink = item.profileLink || item.profilelink || '';
             const notes = item.notes || item.securityNotes || '';
 
             const card = document.createElement("div");
             card.className = "col-md-4 col-sm-6 mb-4";
 
             card.innerHTML = `
-                <div class="p-4 rounded shadow-lg h-100" style="background: #111827 !important; border: 1px solid #374151 !important; color: #ffffff;">
-                    <div style="font-size: 12px; font-weight: 700; color: #38bdf8; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px;">${category}</div>
-                    <div class="d-flex align-items-center mb-3">
-                        <i class="fa-solid fa-shield-halved text-info fa-lg me-2"></i>
-                        <h5 class="text-white fw-bold m-0" style="font-size: 17px;">${platform}</h5>
-                    </div>
-                    ${holder ? `<p class="mb-2 text-light" style="font-size: 14px;"><strong>Holder:</strong> <span style="color: #e2e8f0;">${holder}</span></p>` : ''}
-                    <p class="mb-2 text-light" style="font-size: 14px;"><strong>Identifier:</strong> <span style="color: #f1f5f9; font-weight: 500;">${username}</span></p>
-                    ${extra ? `<p class="mb-2 text-light" style="font-size: 14px;"><strong>Extra:</strong> <span style="color: #38bdf8; font-weight: 600; background: #1e293b; padding: 2px 8px; border-radius: 4px; border: 1px solid #334155;">${extra}</span></p>` : ''}
-                    
-                    <p class="mb-2 text-light" style="font-size: 14px;">
-                        <strong>Password/PIN:</strong> 
-                        <span style="font-family: monospace; background: #1f2937; padding: 3px 10px; border-radius: 4px; color: #fbbf24; font-weight: bold; border: 1px solid #4b5563; margin-left: 8px;">${pass}</span>
-                    </p>
+                <div class="p-4 rounded shadow-lg h-100 d-flex flex-column justify-content-between" style="background: #111827 !important; border: 1px solid #374151 !important; color: #ffffff;">
+                    <div>
+                        <div style="font-size: 12px; font-weight: 700; color: #38bdf8; text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.5px;">
+                            ${category} ${subType ? `<span style="background: #2980b9; padding: 2px 6px; border-radius: 3px; font-size: 10px; margin-left: 5px; color: #fff;">${subType}</span>` : ''}
+                        </div>
+                        <div class="d-flex align-items-center mb-3">
+                            <i class="fa-solid fa-shield-halved text-info fa-lg me-2"></i>
+                            <h5 class="text-white fw-bold m-0" style="font-size: 17px;">${platform}</h5>
+                        </div>
+                        ${holder ? `<p class="mb-2 text-light" style="font-size: 14px;"><strong>Holder:</strong> <span style="color: #e2e8f0;">${holder}</span></p>` : ''}
+                        ${cardBank ? `<p class="mb-2 text-light" style="font-size: 14px;"><strong>Card Bank:</strong> <span style="color: #e2e8f0;">${cardBank}</span></p>` : ''}
+                        <p class="mb-2 text-light" style="font-size: 14px;"><strong>Number/Identifier:</strong> <span style="color: #f1f5f9; font-weight: 500;">${identifier}</span></p>
+                        ${phoneNumber ? `<p class="mb-2 text-light" style="font-size: 14px;"><strong>Phone Number:</strong> <span style="color: #e2e8f0;">${phoneNumber}</span></p>` : ''}
+                        ${email ? `<p class="mb-2 text-light" style="font-size: 14px;"><strong>Email:</strong> <span style="color: #e2e8f0;">${email}</span></p>` : ''}
+                        ${expiryDate ? `<p class="mb-2 text-light" style="font-size: 14px;"><strong>Expiry Date:</strong> <span style="color: #38bdf8; font-weight: 600;">${expiryDate}</span></p>` : ''}
+                        ${cvv ? `<p class="mb-2 text-light" style="font-size: 14px;"><strong>CVV:</strong> <span style="color: #fbbf24; font-weight: 600;">${cvv}</span></p>` : ''}
+                        ${profileLink ? `<p class="mb-2 text-light" style="font-size: 14px;"><strong>Profile Link:</strong> <a href="${profileLink}" target="_blank" style="color: #38bdf8;">Link</a></p>` : ''}
+                        
+                        <p class="mb-2 text-light" style="font-size: 14px;">
+                            <strong>Password/PIN:</strong> 
+                            <span style="font-family: monospace; background: #1f2937; padding: 3px 10px; border-radius: 4px; color: #fbbf24; font-weight: bold; border: 1px solid #4b5563; margin-left: 8px;">${pass}</span>
+                        </p>
 
-                    ${notes ? `<p class="mb-0 text-light pt-2 mt-2" style="font-size: 13.5px; border-top: 1px dashed #374151;"><strong>Notes:</strong> <span style="color: #9ca3af;">${notes}</span></p>` : ''}
-              </div>
-          `;
-          vaultContainer.appendChild(card);
-      });
+                        ${notes ? `<p class="mb-0 text-light pt-2 mt-2" style="font-size: 13.5px; border-top: 1px dashed #374151;"><strong>Notes:</strong> <span style="color: #9ca3af;">${notes}</span></p>` : ''}
+                    </div>
+
+                    <div class="d-flex gap-2 mt-3 pt-3 border-top border-secondary">
+                        <button class="btn btn-sm btn-outline-info flex-grow-1 edit-record-btn" data-id="${recordId}">
+                            <i class="fa-solid fa-pen-to-square"></i> Edit
+                        </button>
+                        <button class="btn btn-sm btn-outline-danger flex-grow-1 delete-record-btn" data-id="${recordId}">
+                            <i class="fa-solid fa-trash-can"></i> Delete
+                        </button>
+                    </div>
+                </div>
+            `;
+            vaultContainer.appendChild(card);
+        });
+
+        document.querySelectorAll('.edit-record-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const recId = e.currentTarget.getAttribute('data-id');
+                openDashboardStyleEditModal(recId, records);
+            });
+        });
+
+        document.querySelectorAll('.delete-record-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const recId = e.currentTarget.getAttribute('data-id');
+                deleteVaultRecord(recId);
+            });
+        });
    }
+}
+
+/* ==========================================================================
+    Dashboard-Style Dynamic Edit Modal Functionality with Visible Dropdown Icons
+    ========================================================================== */
+function openDashboardStyleEditModal(recordId, records) {
+    const record = records.find(r => String(r.id) === String(recordId));
+    if (!record) {
+        showFlashPopup("Record not found!", "error");
+        return;
+    }
+
+    const existingModal = document.getElementById('dashboardStyleEditModal');
+    if (existingModal) existingModal.remove();
+
+    // Dropdown styling class to ensure native appearance & arrow indicators
+    const dropdownStyle = `
+        background-color: #0b0f19 !important; 
+        color: #ffffff !important; 
+        border: 1px solid #4b5563 !important; 
+        padding: 10px 14px !important; 
+        border-radius: 6px !important; 
+        cursor: pointer !important;
+        appearance: menulist !important;
+        -webkit-appearance: menulist !important;
+        -moz-appearance: menulist !important;
+    `;
+
+    const modal = document.createElement('div');
+    modal.id = 'dashboardStyleEditModal';
+    modal.className = 'flash-popup-overlay';
+    modal.innerHTML = `
+        <div class="flash-popup-box" style="max-width: 600px; text-align: left; background: #1f2937; color: #fff; max-height: 90vh; overflow-y: auto; padding: 25px; border: 1px solid #374151;">
+            <h4 class="mb-4 text-info"><i class="fa-solid fa-pen-to-square"></i> Edit Vault Information (Dashboard Style)</h4>
+            
+            <!-- Category Selection -->
+            <div class="mb-3">
+                <label class="form-label text-light" style="font-size: 13px;">Category <span style="color:#ef4444">*</span></label>
+                <select id="editCategorySelect" style="${dropdownStyle} width: 100%;">
+                    <option value="" disabled>Select Category</option>
+                    <option value="Banking & Financial" ${record.category === 'Banking & Financial' ? 'selected' : ''}>Banking & Financial</option>
+                    <option value="Social Media" ${record.category === 'Social Media' ? 'selected' : ''}>Social Media</option>
+                    <option value="Email & Messaging" ${record.category === 'Email & Messaging' ? 'selected' : ''}>Email & Messaging</option>
+                    <option value="Other Accounts" ${record.category === 'Other Accounts' ? 'selected' : ''}>Other Accounts</option>
+                </select>
+            </div>
+
+            <!-- Dynamic Banking SubType Container -->
+            <div id="editBankingSubTypeContainer"></div>
+
+            <!-- Platform / Service Selection -->
+            <div class="mb-3">
+                <label class="form-label text-light" style="font-size: 13px;">Platform / Service <span style="color:#ef4444">*</span></label>
+                <select id="editPlatformSelect" style="${dropdownStyle} width: 100%;">
+                    <option value="" disabled selected>Select Service</option>
+                </select>
+            </div>
+
+            <!-- Dynamic Inputs Container -->
+            <div id="editDynamicFieldsContainer"></div>
+
+            <div class="d-flex gap-2 justify-content-end mt-4 pt-3 border-top border-secondary">
+                <button id="cancelEditRecord" class="btn btn-secondary btn-sm px-4">Cancel</button>
+                <button id="saveEditRecord" class="btn btn-primary btn-sm px-4">Save Changes</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+
+    const categorySelectElem = document.getElementById('editCategorySelect');
+    const platformSelectElem = document.getElementById('editPlatformSelect');
+    const subTypeContainerElem = document.getElementById('editBankingSubTypeContainer');
+    const dynamicFieldsElem = document.getElementById('editDynamicFieldsContainer');
+
+    function updateFormFields(cat, subT, plat, recData) {
+        subTypeContainerElem.innerHTML = '';
+        platformSelectElem.innerHTML = '<option value="" disabled>Select Service</option>';
+
+        if (cat === 'Banking & Financial') {
+            subTypeContainerElem.innerHTML = `
+                <div class="mb-3">
+                    <label class="form-label text-light" style="font-size: 13px;">Banking Type <span style="color:#ef4444">*</span></label>
+                    <select id="editBankingSubTypeSelect" style="${dropdownStyle} width: 100%;">
+                        <option value="" disabled ${!subT ? 'selected' : ''}>Select Banking Type</option>
+                        ${bankingSubTypes.map(s => `<option value="${s}" ${s === subT ? 'selected' : ''}>${s}</option>`).join('')}
+                    </select>
+                </div>
+            `;
+
+            const subTypeElem = document.getElementById('editBankingSubTypeSelect');
+            if (subTypeElem) {
+                subTypeElem.addEventListener('change', () => {
+                    populatePlatforms(cat, subTypeElem.value, '');
+                    renderInputs(cat, subTypeElem.value, '', recData);
+                });
+            }
+
+            if (subT) {
+                populatePlatforms(cat, subT, plat);
+            }
+        } else {
+            if (serviceOptions[cat]) {
+                serviceOptions[cat].forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s;
+                    opt.innerText = s;
+                    if (s === plat) opt.selected = true;
+                    platformSelectElem.appendChild(opt);
+                });
+            }
+        }
+
+        renderInputs(cat, subT, plat, recData);
+    }
+
+    function populatePlatforms(cat, subT, selectedPlat) {
+        platformSelectElem.innerHTML = `<option value="" disabled ${!selectedPlat ? 'selected' : ''}>Select ${subT} Provider</option>`;
+        if (bankingPlatformOptions[subT]) {
+            bankingPlatformOptions[subT].forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p;
+                opt.innerText = p;
+                if (p === selectedPlat) opt.selected = true;
+                platformSelectElem.appendChild(opt);
+            });
+        }
+
+        platformSelectElem.onchange = function() {
+            const subElem = document.getElementById('editBankingSubTypeSelect');
+            renderInputs(cat, subElem ? subElem.value : '', platformSelectElem.value, record);
+        };
+    }
+
+    function renderInputs(cat, subT, plat, d) {
+        dynamicFieldsElem.innerHTML = '';
+
+        if (cat === 'Banking & Financial') {
+            const isCard = (subT === 'Card Banking' || bankingPlatformOptions['Card Banking']?.includes(plat));
+            const isInternet = (subT === 'Internet Banking');
+            const isPayPal = (subT === 'PayPal' || plat === 'PayPal Account');
+
+            dynamicFieldsElem.innerHTML = `
+                <div class="mb-3">
+                    <label class="form-label text-light" style="font-size: 13px;">Account Holder Name <span style="color:#ef4444">*</span></label>
+                    <input type="text" id="editHolder" class="form-control bg-dark text-white border-secondary" value="${d.holderName || d.holdername || ''}">
+                </div>
+                ${isCard ? `
+                    <div class="mb-3">
+                        <label class="form-label text-light" style="font-size: 13px;">Card Bank Name <span style="color:#ef4444">*</span></label>
+                        <input type="text" id="editCardBank" class="form-control bg-dark text-white border-secondary" value="${d.cardBankName || d.cardbankname || ''}">
+                    </div>
+                ` : ''}
+                <div class="mb-3">
+                    <label class="form-label text-light" style="font-size: 13px;">${isCard ? 'Card Number' : 'Account Number'} <span style="color:#ef4444">*</span></label>
+                    <input type="text" id="editIdentifier" class="form-control bg-dark text-white border-secondary" value="${d.identifier || ''}">
+                </div>
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label text-light" style="font-size: 13px;">Phone Number <span style="color:#ef4444">*</span></label>
+                        <input type="text" id="editPhone" class="form-control bg-dark text-white border-secondary" value="${d.phoneNumber || d.phonenumber || ''}">
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label text-light" style="font-size: 13px;">Email Address ${isPayPal ? '<span style="color:#ef4444">*</span>' : '(Optional)'}</label>
+                        <input type="email" id="editEmail" class="form-control bg-dark text-white border-secondary" value="${d.email || ''}">
+                    </div>
+                </div>
+                <div class="row">
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label text-light" style="font-size: 13px;">Password / PIN ${isInternet ? '(Optional)' : '<span style="color:#ef4444">*</span>'}</label>
+                        <input type="text" id="editSecret" class="form-control bg-dark text-white border-secondary" value="${d.secret || d.password || ''}">
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label text-light" style="font-size: 13px;">Expiry Date (MM/YY)</label>
+                        <input type="text" id="editExpiry" maxlength="7" class="form-control bg-dark text-white border-secondary" value="${d.expiryDate || d.expirydate || ''}">
+                    </div>
+                    <div class="col-md-4 mb-3">
+                        <label class="form-label text-light" style="font-size: 13px;">CVV Code</label>
+                        <input type="text" id="editCvv" maxlength="3" class="form-control bg-dark text-white border-secondary" value="${d.extraDetail || d.extradetail || ''}">
+                    </div>
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-light" style="font-size: 13px;">Profile / Visit Link (Optional)</label>
+                    <input type="text" id="editProfileLink" class="form-control bg-dark text-white border-secondary" value="${d.profileLink || d.profilelink || ''}">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-light" style="font-size: 13px;">Security Notes (Optional)</label>
+                    <textarea id="editNotes" class="form-control bg-dark text-white border-secondary" rows="2">${d.notes || ''}</textarea>
+                </div>
+            `;
+        } else {
+            dynamicFieldsElem.innerHTML = `
+                <div class="mb-3">
+                    <label class="form-label text-light" style="font-size: 13px;">Username / Email / Phone <span style="color:#ef4444">*</span></label>
+                    <input type="text" id="editIdentifier" class="form-control bg-dark text-white border-secondary" value="${d.identifier || ''}">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-light" style="font-size: 13px;">Profile / Visit Link (Optional)</label>
+                    <input type="text" id="editProfileLink" class="form-control bg-dark text-white border-secondary" value="${d.profileLink || d.profilelink || ''}">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-light" style="font-size: 13px;">Account Password <span style="color:#ef4444">*</span></label>
+                    <input type="text" id="editSecret" class="form-control bg-dark text-white border-secondary" value="${d.secret || d.password || ''}">
+                </div>
+                <div class="mb-3">
+                    <label class="form-label text-light" style="font-size: 13px;">Security Notes (Optional)</label>
+                    <textarea id="editNotes" class="form-control bg-dark text-white border-secondary" rows="2">${d.notes || ''}</textarea>
+                </div>
+            `;
+        }
+    }
+
+    categorySelectElem.addEventListener('change', () => {
+        const cat = categorySelectElem.value;
+        updateFormFields(cat, '', '', record);
+    });
+
+    const initialCat = record.category || 'Banking & Financial';
+    const initialSub = record.bankingSubType || record.bankingsubtype || '';
+    const initialPlat = record.platform || '';
+    updateFormFields(initialCat, initialSub, initialPlat, record);
+
+    document.getElementById('cancelEditRecord').addEventListener('click', () => modal.remove());
+
+    document.getElementById('saveEditRecord').addEventListener('click', async () => {
+        const catVal = categorySelectElem.value;
+        const subElem = document.getElementById('editBankingSubTypeSelect');
+        const subVal = subElem ? subElem.value : '';
+        const platVal = platformSelectElem.value;
+
+        if (!catVal || !platVal) {
+            alert("Please select Category and Platform/Service!");
+            return;
+        }
+
+        const holderVal = document.getElementById('editHolder') ? document.getElementById('editHolder').value.trim() : '';
+        const cardBankVal = document.getElementById('editCardBank') ? document.getElementById('editCardBank').value.trim() : '';
+        const identifierVal = document.getElementById('editIdentifier') ? document.getElementById('editIdentifier').value.trim() : '';
+        const phoneVal = document.getElementById('editPhone') ? document.getElementById('editPhone').value.trim() : '';
+        const emailVal = document.getElementById('editEmail') ? document.getElementById('editEmail').value.trim() : '';
+        const secretVal = document.getElementById('editSecret') ? document.getElementById('editSecret').value.trim() : '';
+        const expiryVal = document.getElementById('editExpiry') ? document.getElementById('editExpiry').value.trim() : '';
+        const cvvVal = document.getElementById('editCvv') ? document.getElementById('editCvv').value.trim() : '';
+        const profileLinkVal = document.getElementById('editProfileLink') ? document.getElementById('editProfileLink').value.trim() : '';
+        const notesVal = document.getElementById('editNotes') ? document.getElementById('editNotes').value.trim() : '';
+
+        let payloadData = {
+            id: recordId,
+            userid: currentUserId,
+            userfullname: userData.fullName || userData.userName || '',
+            category: catVal,
+            bankingsubtype: subVal,
+            platform: platVal,
+            holdername: holderVal,
+            cardbankname: cardBankVal,
+            identifier: identifierVal,
+            phonenumber: phoneVal,
+            email: emailVal,
+            secret: secretVal,
+            expirydate: expiryVal,
+            extradetail: cvvVal,
+            profilelink: profileLinkVal,
+            notes: notesVal
+        };
+
+        try {
+            if (supabaseClient) {
+                await supabaseClient
+                    .from('credentials')
+                    .update(payloadData)
+                    .eq('id', recordId);
+            }
+
+            const localRaw = localStorage.getItem('vault_records') || '[]';
+            let localArr = JSON.parse(localRaw);
+            localArr = localArr.map(r => String(r.id) === String(recordId) ? payloadData : r);
+            localStorage.setItem('vault_records', JSON.stringify(localArr));
+
+            modal.remove();
+            showFlashPopup("Vault record updated successfully!", "success");
+            loadUserDetails(true);
+        } catch (err) {
+            console.error("Update error:", err);
+            showFlashPopup("Failed to update record!", "error");
+        }
+    });
+}
+
+/* ==========================================================================
+    Delete Vault Record Functionality
+    ========================================================================== */
+async function deleteVaultRecord(recordId) {
+    if (confirm("Are you sure you want to delete this vault record?")) {
+        try {
+            if (supabaseClient) {
+                await supabaseClient
+                    .from('credentials')
+                    .delete()
+                    .eq('id', recordId);
+            }
+
+            const localRaw = localStorage.getItem('vault_records') || '[]';
+            let localArr = JSON.parse(localRaw);
+            localArr = localArr.filter(r => String(r.id) !== String(recordId));
+            localStorage.setItem('vault_records', JSON.stringify(localArr));
+
+            showFlashPopup("Vault record deleted successfully!", "success");
+            loadUserDetails(true);
+        } catch (err) {
+            console.error("Delete error:", err);
+            showFlashPopup("Failed to delete record!", "error");
+        }
+    }
 }
 
 /* ==========================================================================
@@ -393,7 +768,7 @@ async function updateUserStatus() {
 }
 
 /* ==========================================================================
-    Update User Password (Supabase Auth + Local Database)
+    Update User Password
     ========================================================================== */
 async function updatePassword() {
     const inputElem = document.getElementById("newPasswordInput") || document.getElementById("setNewPasswordInput");
@@ -407,13 +782,11 @@ async function updatePassword() {
 
     try {
         if (supabaseClient) {
-            // ১. Supabase Auth সার্ভারে ইউজারের পাসওয়ার্ড আপডেট করা (যদি ইউজারটির সঠিক Auth UID বা আইডি পাওয়া যায়)
             let targetAuthUid = currentUserId;
             if (userData && (userData.uid || userData.id)) {
                 targetAuthUid = userData.uid || userData.id;
             }
 
-            // Supabase Admin API দিয়ে Auth পাসওয়ার্ড আপডেট করার চেষ্টা
             const { error: authError } = await supabaseClient.auth.admin.updateUserById(
                 targetAuthUid,
                 { password: newPass }
@@ -423,7 +796,6 @@ async function updatePassword() {
                 console.warn("Supabase Auth admin update notice:", authError.message);
             }
 
-            // ২. Supabase 'users' টেবিলে পাসওয়ার্ড আপডেট করা
             await supabaseClient
                 .from('users')
                 .update({ password: newPass, plainPassword: newPass })
@@ -474,7 +846,7 @@ async function deleteAccount() {
 }
 
 /* ==========================================================================
-    Supabase Real-Time Instant Live Sync Integration (3 Seconds Retry)
+    Supabase Real-Time Instant Live Sync Integration
     ========================================================================== */
 function initSupabaseRealtime() {
     if (!supabaseClient) return;
@@ -501,7 +873,7 @@ function initSupabaseRealtime() {
             }
         )
         .on('postgres_changes', { event: '*', schema: 'public', table: 'credentials' }, (payload) => {
-            const recordUserId = String(payload.new?.userId || payload.old?.userId || '').trim();
+            const recordUserId = String(payload.new?.userId || payload.new?.userid || payload.old?.userId || payload.old?.userid || '').trim();
             if (!recordUserId || recordUserId === String(currentUserId).trim()) {
                 loadUserDetails(true);
             }
@@ -521,7 +893,7 @@ function initSupabaseRealtime() {
 }
 
 /* ==========================================================================
-    Custom Flash Popup & Live Sync Indicator (Added Warning Icon Animation)
+    Custom Flash Popup & Live Sync Indicator Styles
     ========================================================================== */
 function injectNotificationStyles() {
     if (document.getElementById('flashPopupStyles')) return;

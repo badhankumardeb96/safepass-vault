@@ -1,5 +1,5 @@
 /* ==========================================================================
-    Dashboard JavaScript Logic (Supabase Direct Integration & Real-time Sync)
+    Dashboard JavaScript Logic (Supabase Direct Integration & Real-time Live Sync)
     ========================================================================== */
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -9,8 +9,16 @@ document.addEventListener('DOMContentLoaded', () => {
     const SUPABASE_ANON_KEY = "sb_publishable_NkMibVnz7Vt6CAHuSTaQZw_zpUFGNsv"; 
 
     let supabaseClient = null;
+    let dashboardRealtimeSub = null;
+
     if (window.supabase && typeof window.supabase.createClient === 'function') {
-        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+            realtime: {
+                params: {
+                    eventsPerSecond: 10,
+                },
+            },
+        });
     }
 
     // 1. Logged In User Check & Data Parsing
@@ -352,11 +360,10 @@ document.addEventListener('DOMContentLoaded', () => {
                 </div>
             `;
 
-            // Auto-formatting logic for Expiry Date (MM/YY)
             const expiryInput = document.getElementById('fieldExpiryDate');
             if (expiryInput) {
                 expiryInput.addEventListener('input', function(e) {
-                    let val = this.value.replace(/\D/g, ''); // Remove non-digits
+                    let val = this.value.replace(/\D/g, '');
                     if (val.length >= 2) {
                         let month = val.substring(0, 2);
                         if (parseInt(month) > 12) month = '12';
@@ -665,7 +672,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     if (cancelEditBtn) cancelEditBtn.addEventListener('click', resetFormState);
 
-    // 5. Fetch Vault Records
+    // 5. Fetch Vault Records & Realtime Live Sync Setup
     let allRecords = [];
     const activeTimers = {};
 
@@ -706,6 +713,27 @@ document.addEventListener('DOMContentLoaded', () => {
         allRecords = combined.filter(item => isMatchingUser(item, currentUserId, currentNameKey));
         renderRecords(allRecords);
     }
+
+    // Init Dashboard Supabase Real-Time Listener
+    function initDashboardRealtime() {
+        if (!supabaseClient) return;
+        if (dashboardRealtimeSub) {
+            supabaseClient.removeChannel(dashboardRealtimeSub);
+        }
+
+        dashboardRealtimeSub = supabaseClient
+            .channel('dashboard-credentials-sync')
+            .on('postgres_changes', { event: '*', schema: 'public', table: 'credentials' }, () => {
+                loadVaultRecords();
+            })
+            .subscribe();
+    }
+
+    initDashboardRealtime();
+
+    window.addEventListener('storage', () => {
+        loadVaultRecords();
+    });
 
     function isMatchingUser(item, currentId, currentName) {
         if (!item) return false;
