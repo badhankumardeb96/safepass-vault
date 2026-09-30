@@ -64,9 +64,15 @@
                     <!-- Account / Platform Selection -->
                     <div class="form-group">
                         <label for="accountTypeSelect">Platform / Service <span class="required">*</span></label>
-                        <select id="accountTypeSelect" required>
-                            <option value="" disabled selected>Select Service First</option>
-                        </select>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <select id="accountTypeSelect" required style="flex: 1;">
+                                <option value="" disabled selected>Select Service First</option>
+                            </select>
+                            <!-- Platform Quick Link Button -->
+                            <a id="platformQuickLink" href="#" target="_blank" title="Open platform official/login page" class="platform-link-btn" style="display: none; padding: 10px 14px; background: #2563eb; color: #fff; border-radius: 6px; text-decoration: none; align-items: center; gap: 6px; font-size: 14px; white-space: nowrap;">
+                                <i class="fa-solid fa-external-link-alt"></i> Visit
+                            </a>
+                        </div>
                     </div>
 
                     <!-- Dynamic Input Fields Container -->

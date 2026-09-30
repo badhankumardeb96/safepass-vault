@@ -118,20 +118,17 @@ document.addEventListener('DOMContentLoaded', () => {
     // 3. Dynamic Service Dropdown & Input Rendering
     const categorySelect = document.getElementById('categorySelect');
     const accountTypeSelect = document.getElementById('accountTypeSelect');
+    const platformQuickLink = document.getElementById('platformQuickLink');
     const dynamicFieldsContainer = document.getElementById('dynamicFieldsContainer');
+
+    if (platformQuickLink) {
+        platformQuickLink.style.display = 'none';
+    }
 
     const serviceOptions = {
         'Social Media': [
             'Facebook', 'Instagram', 'Twitter (X)', 'WhatsApp', 
             'LinkedIn', 'TikTok', 'YouTube', 'Other Social Media'
-        ],
-        'Banking & Financial': [
-            'Islami Bank Bangladesh', 'Dutch-Bangla Bank (DBBL)', 'BRAC Bank', 
-            'The City Bank', 'Eastern Bank (EBL)', 'Sonali Bank', 'Janata Bank', 
-            'Agrani Bank', 'Pubali Bank', 'United Commercial Bank (UCB)', 
-            'Mutual Trust Bank (MTB)', 'Standard Chartered Bank', 'HSBC', 
-            'Other Bank Account', 'bKash', 'Nagad', 'Rocket', 'Upay', 
-            'CellFin', 'Tap', 'Credit / Debit Card', 'PayPal', 'Crypto Wallet'
         ],
         'Email & Messaging': [
             'Gmail / Google', 'Outlook / Hotmail', 'Yahoo Mail', 'Telegram'
@@ -141,12 +138,36 @@ document.addEventListener('DOMContentLoaded', () => {
         ]
     };
 
+    const bankingSubTypes = ['Mobile Banking', 'Internet Banking', 'Card Banking', 'Crypto Wallet', 'PayPal'];
+
+    const bankingPlatformOptions = {
+        'Mobile Banking': ['bKash', 'Nagad', 'Rocket', 'Upay', 'CellFin', 'Tap', 'Other Mobile Wallet'],
+        'Internet Banking': [
+            'Islami Bank Bangladesh', 'Dutch-Bangla Bank (DBBL)', 'BRAC Bank', 
+            'The City Bank', 'Eastern Bank (EBL)', 'Sonali Bank', 'Janata Bank', 
+            'Agrani Bank', 'Pubali Bank', 'United Commercial Bank (UCB)', 
+            'Mutual Trust Bank (MTB)', 'Standard Chartered Bank', 'HSBC', 'Other Bank'
+        ],
+        'Card Banking': ['Visa Card', 'Master Card', 'Debit Card', 'Credit Card', 'Gift Card', 'Other Card'],
+        'Crypto Wallet': ['Binance', 'Coinbase', 'Trust Wallet', 'MetaMask', 'Other Crypto'],
+        'PayPal': ['PayPal Account']
+    };
+
     if (categorySelect) {
         categorySelect.addEventListener('change', () => {
             const category = categorySelect.value;
+            
+            const existingSubContainer = document.getElementById('bankingSubTypeContainer');
+            if (existingSubContainer) {
+                existingSubContainer.remove();
+            }
+
             if (accountTypeSelect) {
                 accountTypeSelect.innerHTML = '<option value="" disabled selected>Select Service</option>';
-                if (serviceOptions[category]) {
+                
+                if (category === 'Banking & Financial') {
+                    createBankingTypeDropdown();
+                } else if (serviceOptions[category]) {
                     serviceOptions[category].forEach(service => {
                         const opt = document.createElement('option');
                         opt.value = service;
@@ -155,48 +176,213 @@ document.addEventListener('DOMContentLoaded', () => {
                     });
                 }
             }
-            renderDynamicFields('');
+            renderDynamicFields(category, '', '');
         });
     }
 
-    if (accountTypeSelect) {
-        accountTypeSelect.addEventListener('change', () => {
-            renderDynamicFields(categorySelect ? categorySelect.value : '');
-        });
+    function createBankingTypeDropdown(selectedSub = '', selectedPlatform = '') {
+        let subContainer = document.getElementById('bankingSubTypeContainer');
+        if (!subContainer) {
+            subContainer = document.createElement('div');
+            subContainer.id = 'bankingSubTypeContainer';
+            subContainer.className = 'form-group';
+            
+            const accountTypeParent = accountTypeSelect ? accountTypeSelect.closest('.form-group') : null;
+            if (accountTypeParent && accountTypeParent.parentNode) {
+                accountTypeParent.parentNode.insertBefore(subContainer, accountTypeParent);
+            }
+        }
+
+        subContainer.innerHTML = `
+            <label>Banking Type <span class="required">*</span></label>
+            <select id="bankingSubTypeSelect" class="form-control">
+                <option value="" disabled ${!selectedSub ? 'selected' : ''}>Select Banking Type</option>
+                ${bankingSubTypes.map(sub => `<option value="${sub}" ${sub === selectedSub ? 'selected' : ''}>${sub}</option>`).join('')}
+            </select>
+            <small class="error-msg" id="err-bankingSubTypeSelect" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
+        `;
+
+        const subTypeSelectElem = document.getElementById('bankingSubTypeSelect');
+        if (subTypeSelectElem) {
+            if (selectedSub) {
+                populatePlatformsForBanking(selectedSub, selectedPlatform);
+            }
+
+            subTypeSelectElem.addEventListener('change', () => {
+                const chosenSub = subTypeSelectElem.value;
+                populatePlatformsForBanking(chosenSub, '');
+                renderDynamicFields('Banking & Financial', chosenSub, '');
+            });
+        }
     }
 
-    function renderDynamicFields(category, presetData = {}) {
+    function populatePlatformsForBanking(subType, selectedPlatform = '') {
+        if (!accountTypeSelect) return;
+        accountTypeSelect.innerHTML = `<option value="" disabled ${!selectedPlatform ? 'selected' : ''}>Select ${subType} Provider</option>`;
+        
+        if (bankingPlatformOptions[subType]) {
+            bankingPlatformOptions[subType].forEach(platform => {
+                const opt = document.createElement('option');
+                opt.value = platform;
+                opt.innerText = platform;
+                if (platform === selectedPlatform) opt.selected = true;
+                accountTypeSelect.appendChild(opt);
+            });
+        }
+
+        accountTypeSelect.onchange = function() {
+            const subTypeSelectElem = document.getElementById('bankingSubTypeSelect');
+            const currentSub = subTypeSelectElem ? subTypeSelectElem.value : '';
+            renderDynamicFields('Banking & Financial', currentSub, accountTypeSelect.value);
+        };
+    }
+
+    function renderDynamicFields(category, subType = '', specificPlatform = '', presetData = {}) {
         if (!dynamicFieldsContainer) return;
         dynamicFieldsContainer.innerHTML = '';
 
         if (category === 'Banking & Financial') {
+            const isCardBanking = (subType === 'Card Banking' || bankingPlatformOptions['Card Banking']?.includes(specificPlatform));
+            const isInternetBanking = (subType === 'Internet Banking');
+            const isPayPal = (subType === 'PayPal' || specificPlatform === 'PayPal Account');
+            const isMobileBanking = (subType === 'Mobile Banking');
+            const isCryptoWallet = (subType === 'Crypto Wallet');
+
+            let mainNumLabel = "Account / Card Number <span class='required'>*</span>";
+            let mainNumPlaceholder = "Enter number";
+            
+            if (isCardBanking) {
+                mainNumLabel = "Card Number <span class='required'>*</span>";
+                mainNumPlaceholder = "Enter card number (numbers only)";
+            } else if (isMobileBanking) {
+                mainNumLabel = "Account Number <span class='required'>*</span>";
+                mainNumPlaceholder = "Enter mobile account number";
+            } else if (isInternetBanking) {
+                mainNumLabel = "Account Number <span class='required'>*</span>";
+                mainNumPlaceholder = "Enter bank account number";
+            } else if (isCryptoWallet) {
+                mainNumLabel = "Account / Wallet ID <span class='required'>*</span>";
+                mainNumPlaceholder = "Enter crypto account or wallet ID";
+            } else if (isPayPal) {
+                mainNumLabel = "Account Number (Optional)";
+                mainNumPlaceholder = "Enter account number (optional)";
+            }
+
+            const cardBankNameField = isCardBanking ? `
+                <div class="form-group">
+                    <label>Card Bank Name <span class="required">*</span></label>
+                    <input type="text" id="fieldCardBankName" placeholder="e.g., EBL, City Bank" value="${presetData.cardBankName || presetData.cardbankname || ''}">
+                    <small class="error-msg" id="err-fieldCardBankName" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
+                </div>
+            ` : '';
+
+            const cryptoFields = isCryptoWallet ? `
+                <div class="form-group">
+                    <label>Crypto Account (Optional)</label>
+                    <input type="text" id="fieldCryptoAccount" placeholder="Enter crypto account (optional)" value="${presetData.cryptoAccount || presetData.cryptoaccount || ''}">
+                    <small class="error-msg" id="err-fieldCryptoAccount" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
+                </div>
+                <div class="form-group">
+                    <label>Crypto Card (Optional)</label>
+                    <input type="text" id="fieldCryptoCard" placeholder="Enter crypto card (optional)" value="${presetData.cryptoCard || presetData.cryptocard || ''}">
+                    <small class="error-msg" id="err-fieldCryptoCard" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
+                </div>
+            ` : '';
+
+            const emailLabel = isPayPal ? 'Email Address <span class="required">*</span>' : 'Email Address (Optional)';
+            const passwordLabel = isInternetBanking ? 'PIN / Password (Optional)' : 'PIN / Password <span class="required">*</span>';
+            
+            const expiryDateVal = presetData.expiryDate || presetData.expirydate || '';
+            const cvvVal = presetData.extraDetail || presetData.extradetail || '';
+
+            const expiryDateField = isCardBanking ? `
+                <div class="form-group">
+                    <label>Card Expiry Date <span class="required">*</span></label>
+                    <input type="text" id="fieldExpiryDate" maxlength="7" placeholder="MM/YY (e.g., 12/28)" value="${expiryDateVal}">
+                    <small class="error-msg" id="err-fieldExpiryDate" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
+                </div>
+            ` : `
+                <div class="form-group">
+                    <label>Card Expiry Date (Optional)</label>
+                    <input type="text" id="fieldExpiryDate" maxlength="7" placeholder="MM/YY" value="${expiryDateVal}">
+                    <small class="error-msg" id="err-fieldExpiryDate" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
+                </div>
+            `;
+
+            const cvvLabel = isCardBanking ? 'CVV Code <span class="required">*</span>' : 'CVV Code (3 Digits) (Optional)';
+
             dynamicFieldsContainer.innerHTML = `
                 <div class="form-group">
                     <label>Account Holder Name <span class="required">*</span></label>
-                    <input type="text" id="fieldHolderName" required placeholder="Name on account/card" value="${presetData.holderName || ''}">
+                    <input type="text" id="fieldHolderName" placeholder="e.g., John Doe" value="${presetData.holderName || presetData.holdername || ''}">
+                    <small class="error-msg" id="err-fieldHolderName" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
+                </div>
+                ${cardBankNameField}
+                ${cryptoFields}
+                <div class="form-group">
+                    <label>${mainNumLabel}</label>
+                    <input type="text" id="fieldAccountNo" placeholder="${mainNumPlaceholder}" value="${presetData.identifier || ''}">
+                    <small class="error-msg" id="err-fieldAccountNo" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
                 </div>
                 <div class="form-group">
-                    <label>Account / Card / Phone Number <span class="required">*</span></label>
-                    <input type="text" id="fieldAccountNo" required placeholder="Account or phone number" value="${presetData.identifier || presetData.accountIdentifier || ''}">
+                    <label>Phone Number <span class="required">*</span></label>
+                    <input type="text" id="fieldPhoneNumber" placeholder="Enter phone number" value="${presetData.phoneNumber || presetData.phonenumber || ''}">
+                    <small class="error-msg" id="err-fieldPhoneNumber" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
                 </div>
                 <div class="form-group">
-                    <label>PIN / Password <span class="required">*</span></label>
-                    <input type="password" class="secure-input" id="fieldSecret" required placeholder="******" value="${presetData.secret || presetData.password || ''}">
+                    <label>${emailLabel}</label>
+                    <input type="email" id="fieldEmail" placeholder="e.g., user@example.com" value="${presetData.email || ''}">
+                    <small class="error-msg" id="err-fieldEmail" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
                 </div>
                 <div class="form-group">
-                    <label>Branch / CVV / Extra Info</label>
-                    <input type="text" id="fieldExtraDetail" placeholder="Branch name or details" value="${presetData.extraDetail || ''}">
+                    <label>Profile / Visit Link (Optional)</label>
+                    <input type="text" id="fieldProfileLink" placeholder="e.g., https://site.com" value="${presetData.profileLink || presetData.profilelink || ''}">
+                    <small class="error-msg" id="err-fieldProfileLink" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
+                </div>
+                <div class="form-group">
+                    <label>${passwordLabel}</label>
+                    <input type="password" class="secure-input" id="fieldSecret" placeholder="******" value="${presetData.secret || ''}">
+                    <small class="error-msg" id="err-fieldSecret" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
+                </div>
+                ${expiryDateField}
+                <div class="form-group">
+                    <label>${cvvLabel}</label>
+                    <input type="text" id="fieldExtraDetail" maxlength="3" placeholder="3 digits (e.g., 123)" value="${cvvVal}">
+                    <small class="error-msg" id="err-fieldExtraDetail" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
                 </div>
             `;
+
+            // Auto-formatting logic for Expiry Date (MM/YY)
+            const expiryInput = document.getElementById('fieldExpiryDate');
+            if (expiryInput) {
+                expiryInput.addEventListener('input', function(e) {
+                    let val = this.value.replace(/\D/g, ''); // Remove non-digits
+                    if (val.length >= 2) {
+                        let month = val.substring(0, 2);
+                        if (parseInt(month) > 12) month = '12';
+                        if (parseInt(month) < 1 && month.length === 2) month = '01';
+                        val = month + '/' + val.substring(2, 6);
+                    }
+                    this.value = val;
+                });
+            }
+
         } else {
             dynamicFieldsContainer.innerHTML = `
                 <div class="form-group">
                     <label>Username / Email / Phone <span class="required">*</span></label>
-                    <input type="text" id="fieldIdentifier" required placeholder="e.g., example@gmail.com or username" value="${presetData.identifier || presetData.accountIdentifier || ''}">
+                    <input type="text" id="fieldIdentifier" placeholder="e.g., example@gmail.com" value="${presetData.identifier || ''}">
+                    <small class="error-msg" id="err-fieldIdentifier" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
+                </div>
+                <div class="form-group">
+                    <label>Profile / Visit Link (Optional)</label>
+                    <input type="text" id="fieldProfileLink" placeholder="e.g., https://instagram.com/profile" value="${presetData.profileLink || presetData.profilelink || ''}">
+                    <small class="error-msg" id="err-fieldProfileLink" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
                 </div>
                 <div class="form-group">
                     <label>Account Password <span class="required">*</span></label>
-                    <input type="password" class="secure-input" id="fieldSecret" required placeholder="******" value="${presetData.secret || presetData.password || ''}">
+                    <input type="password" class="secure-input" id="fieldSecret" placeholder="******" value="${presetData.secret || ''}">
+                    <small class="error-msg" id="err-fieldSecret" style="color: #e74c3c; display: none; margin-top: 4px; font-size: 12px;"></small>
                 </div>
             `;
         }
@@ -208,7 +394,29 @@ document.addEventListener('DOMContentLoaded', () => {
         });
     }
 
-    // 4. Save Credential Form Submit (Direct Supabase)
+    function showFieldError(fieldId, message) {
+        const field = document.getElementById(fieldId);
+        const errElem = document.getElementById(`err-${fieldId}`);
+        if (field) {
+            field.style.borderColor = '#e74c3c';
+        }
+        if (errElem) {
+            errElem.innerText = message;
+            errElem.style.display = 'block';
+        }
+    }
+
+    function clearFieldErrors() {
+        document.querySelectorAll('.form-group input, .form-group select').forEach(input => {
+            input.style.borderColor = '';
+        });
+        document.querySelectorAll('.error-msg').forEach(err => {
+            err.innerText = '';
+            err.style.display = 'none';
+        });
+    }
+
+    // 4. Save Credential Form Submit
     const saveCredentialForm = document.getElementById('saveCredentialForm');
     const formTitle = document.getElementById('formTitle');
     const submitFormBtn = document.getElementById('submitFormBtn');
@@ -218,35 +426,190 @@ document.addEventListener('DOMContentLoaded', () => {
     if (saveCredentialForm) {
         saveCredentialForm.addEventListener('submit', async (e) => {
             e.preventDefault();
+            clearFieldErrors();
 
             const category = categorySelect ? categorySelect.value : '';
             const platform = accountTypeSelect ? accountTypeSelect.value : '';
+            
+            let hasError = false;
+
+            if (!category) {
+                alert("Please select a category.");
+                return;
+            }
+
+            let bankingSubTypeVal = '';
+            if (category === 'Banking & Financial') {
+                const subTypeSelectElem = document.getElementById('bankingSubTypeSelect');
+                bankingSubTypeVal = subTypeSelectElem ? subTypeSelectElem.value : '';
+                if (!bankingSubTypeVal) {
+                    showFieldError('bankingSubTypeSelect', 'Please select banking type.');
+                    hasError = true;
+                }
+            }
+
+            if (!platform) {
+                alert("Please select a platform/service.");
+                return;
+            }
+
+            let holderNameVal = '';
+            let identifierVal = '';
+            let phoneNumberVal = '';
+            let emailVal = '';
+            let cardBankNameVal = '';
+            let cryptoAccountVal = '';
+            let cryptoCardVal = '';
+            let profileLinkVal = '';
+            let secretVal = '';
+            let expiryDateVal = '';
+            let extraDetailVal = '';
+
+            if (category === 'Banking & Financial') {
+                holderNameVal = document.getElementById('fieldHolderName') ? document.getElementById('fieldHolderName').value.trim() : '';
+                identifierVal = document.getElementById('fieldAccountNo') ? document.getElementById('fieldAccountNo').value.trim() : '';
+                phoneNumberVal = document.getElementById('fieldPhoneNumber') ? document.getElementById('fieldPhoneNumber').value.trim() : '';
+                emailVal = document.getElementById('fieldEmail') ? document.getElementById('fieldEmail').value.trim() : '';
+                profileLinkVal = document.getElementById('fieldProfileLink') ? document.getElementById('fieldProfileLink').value.trim() : '';
+                secretVal = document.getElementById('fieldSecret') ? document.getElementById('fieldSecret').value.trim() : '';
+                
+                const expiryDateElem = document.getElementById('fieldExpiryDate');
+                if (expiryDateElem) {
+                    expiryDateVal = expiryDateElem.value.trim();
+                }
+
+                const cvvElem = document.getElementById('fieldExtraDetail');
+                if (cvvElem) {
+                    extraDetailVal = cvvElem.value.trim();
+                }
+                
+                const cardBankElem = document.getElementById('fieldCardBankName');
+                if (cardBankElem) {
+                    cardBankNameVal = cardBankElem.value.trim();
+                }
+
+                const cryptoAccElem = document.getElementById('fieldCryptoAccount');
+                if (cryptoAccElem) {
+                    cryptoAccountVal = cryptoAccElem.value.trim();
+                }
+
+                const cryptoCardElem = document.getElementById('fieldCryptoCard');
+                if (cryptoCardElem) {
+                    cryptoCardVal = cryptoCardElem.value.trim();
+                }
+
+                if (!holderNameVal) {
+                    showFieldError('fieldHolderName', 'Account holder name is required.');
+                    hasError = true;
+                }
+
+                const isCardBanking = (bankingSubTypeVal === 'Card Banking' || bankingPlatformOptions['Card Banking']?.includes(platform));
+                if (isCardBanking && !cardBankNameVal) {
+                    showFieldError('fieldCardBankName', 'Card bank name is required.');
+                    hasError = true;
+                }
+
+                const isPayPal = (bankingSubTypeVal === 'PayPal' || platform === 'PayPal Account');
+                
+                if (!isPayPal) {
+                    if (!identifierVal) {
+                        showFieldError('fieldAccountNo', 'Account/Card number is required.');
+                        hasError = true;
+                    }
+                }
+
+                if (!phoneNumberVal) {
+                    showFieldError('fieldPhoneNumber', 'Phone number is required.');
+                    hasError = true;
+                }
+
+                if (isPayPal && !emailVal) {
+                    showFieldError('fieldEmail', 'Email address is mandatory for PayPal.');
+                    hasError = true;
+                }
+
+                const isInternetBanking = (bankingSubTypeVal === 'Internet Banking');
+                if (!isInternetBanking && !secretVal) {
+                    showFieldError('fieldSecret', 'PIN or password is required.');
+                    hasError = true;
+                }
+
+                if (isCardBanking) {
+                    if (!expiryDateVal) {
+                        showFieldError('fieldExpiryDate', 'Expiry date is required.');
+                        hasError = true;
+                    } else {
+                        const expiryRegex = /^(0[1-9]|1[0-2])\/(\d{2}|\d{4})$/;
+                        if (!expiryRegex.test(expiryDateVal)) {
+                            showFieldError('fieldExpiryDate', 'Invalid format. Use MM/YY with 2-digit month and 2 or 4-digit year.');
+                            hasError = true;
+                        }
+                    }
+
+                    if (!extraDetailVal) {
+                        showFieldError('fieldExtraDetail', 'CVV is required.');
+                        hasError = true;
+                    } else if (!/^\d{3}$/.test(extraDetailVal)) {
+                        showFieldError('fieldExtraDetail', 'CVV must be exactly 3 digits numbers only.');
+                        hasError = true;
+                    }
+                } else {
+                    if (expiryDateVal) {
+                        const expiryRegex = /^(0[1-9]|1[0-2])\/(\d{2}|\d{4})$/;
+                        if (!expiryRegex.test(expiryDateVal)) {
+                            showFieldError('fieldExpiryDate', 'Invalid format. Use MM/YY with 2-digit month and 2 or 4-digit year.');
+                            hasError = true;
+                        }
+                    }
+                    if (extraDetailVal && !/^\d{3}$/.test(extraDetailVal)) {
+                        showFieldError('fieldExtraDetail', 'CVV must be exactly 3 digits numbers only.');
+                        hasError = true;
+                    }
+                }
+            } else {
+                identifierVal = document.getElementById('fieldIdentifier') ? document.getElementById('fieldIdentifier').value.trim() : '';
+                profileLinkVal = document.getElementById('fieldProfileLink') ? document.getElementById('fieldProfileLink').value.trim() : '';
+                secretVal = document.getElementById('fieldSecret') ? document.getElementById('fieldSecret').value.trim() : '';
+
+                if (!identifierVal) {
+                    showFieldError('fieldIdentifier', 'Username, email, or phone is required.');
+                    hasError = true;
+                }
+
+                if (!secretVal) {
+                    showFieldError('fieldSecret', 'Account password is required.');
+                    hasError = true;
+                }
+            }
+
+            if (hasError) {
+                return;
+            }
+
             const editId = editRecordIdInput ? editRecordIdInput.value : '';
             const currentUserId = getUserIdentifier();
             const recordId = editId || 'rec-' + Date.now();
 
             let payloadData = {
                 id: recordId,
-                userId: currentUserId,
-                userFullName: loggedInUser.fullName || loggedInUser.name || loggedInUser.userName || '',
+                userid: currentUserId,
+                userfullname: loggedInUser.fullName || loggedInUser.name || loggedInUser.userName || '',
                 category: category,
+                bankingsubtype: bankingSubTypeVal,
                 platform: platform,
                 notes: document.getElementById('extraNotes') ? document.getElementById('extraNotes').value : '',
-                holderName: '',
-                identifier: '',
-                secret: '',
-                extraDetail: ''
+                holdername: holderNameVal,
+                cardbankname: cardBankNameVal,
+                cryptoaccount: cryptoAccountVal,
+                cryptocard: cryptoCardVal,
+                identifier: identifierVal,
+                phonenumber: phoneNumberVal,
+                email: emailVal,
+                profilelink: profileLinkVal,
+                secret: secretVal,
+                expirydate: expiryDateVal,
+                extradetail: extraDetailVal
             };
-
-            if (category === 'Banking & Financial') {
-                payloadData.holderName = document.getElementById('fieldHolderName') ? document.getElementById('fieldHolderName').value : '';
-                payloadData.identifier = document.getElementById('fieldAccountNo') ? document.getElementById('fieldAccountNo').value : '';
-                payloadData.secret = document.getElementById('fieldSecret') ? document.getElementById('fieldSecret').value : '';
-                payloadData.extraDetail = document.getElementById('fieldExtraDetail') ? document.getElementById('fieldExtraDetail').value : '';
-            } else {
-                payloadData.identifier = document.getElementById('fieldIdentifier') ? document.getElementById('fieldIdentifier').value : '';
-                payloadData.secret = document.getElementById('fieldSecret') ? document.getElementById('fieldSecret').value : '';
-            }
 
             try {
                 if (supabaseClient) {
@@ -287,19 +650,24 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function resetFormState() {
         if (saveCredentialForm) saveCredentialForm.reset();
+        clearFieldErrors();
+        
+        const subContainer = document.getElementById('bankingSubTypeContainer');
+        if (subContainer) subContainer.remove();
+
         if (editRecordIdInput) editRecordIdInput.value = '';
         if (formTitle) formTitle.innerHTML = `<i class="fa-solid fa-key"></i> Store New Credential`;
         if (submitFormBtn) submitFormBtn.innerHTML = `<i class="fa-solid fa-lock"></i> Save To Vault`;
         if (cancelEditBtn) cancelEditBtn.style.display = 'none';
         if (dynamicFieldsContainer) dynamicFieldsContainer.innerHTML = '';
+        if (accountTypeSelect) accountTypeSelect.innerHTML = '<option value="" disabled selected>Select Service</option>';
     }
 
     if (cancelEditBtn) cancelEditBtn.addEventListener('click', resetFormState);
 
-    // 5. Fetch Vault Records from Supabase & Local
+    // 5. Fetch Vault Records
     let allRecords = [];
     const activeTimers = {};
-    let targetDeleteId = null;
 
     async function loadVaultRecords() {
         let currentUserId = getUserIdentifier();
@@ -339,37 +707,16 @@ document.addEventListener('DOMContentLoaded', () => {
         renderRecords(allRecords);
     }
 
-    // Supabase Real-time Sync Setup (অন্য ব্রাউজারে সাথে সাথে আপডেট ও রিমুভ পাওয়ার জন্য)
-    if (supabaseClient) {
-        supabaseClient
-            .channel('public:credentials_sync')
-            .on('postgres_changes', { event: '*', schema: 'public', table: 'credentials' }, (payload) => {
-                // রিয়েল-টাইমে লোকাল স্টোরেজ ও স্ক্রিন আপডেট করা
-                if (payload.eventType === 'DELETE') {
-                    let localRecords = [];
-                    try {
-                        localRecords = JSON.parse(localStorage.getItem('vault_records') || '[]');
-                    } catch(e) {}
-                    
-                    const deletedId = payload.old.id;
-                    localRecords = localRecords.filter(r => r.id !== deletedId && r._id !== deletedId);
-                    localStorage.setItem('vault_records', JSON.stringify(localRecords));
-                }
-                loadVaultRecords();
-            })
-            .subscribe();
-    }
-
     function isMatchingUser(item, currentId, currentName) {
         if (!item) return false;
         
-        const itemUserId = (item.userId || item.id || '').toString().trim();
-        const itemUserName = (item.userFullName || item.name || '').toString().trim().toLowerCase();
+        const itemUserId = (item.userId || item.userid || item.id || '').toString().trim();
+        const itemUserName = (item.userFullName || item.userfullname || item.name || '').toString().trim().toLowerCase();
         
         const uId = (loggedInUser.userId || '').toString().trim();
         const id = (loggedInUser.id || '').toString().trim();
         const email = (loggedInUser.email || '').toString().trim();
-        const phone = (loggedInUser.phoneNumber || loggedInUser.phone || '').toString().trim();
+        const phone = (loggedInUser.phoneNumber || loggedInUser.phonenumber || loggedInUser.phone || '').toString().trim();
 
         return (
             (itemUserId && (
@@ -401,26 +748,62 @@ document.addEventListener('DOMContentLoaded', () => {
             const card = document.createElement('div');
             card.className = 'record-card';
             
-            const realPassword = item.secret || item.password || 'N/A';
-            const recordId = `pwd-${index}`;
+            const realPassword = item.secret || item.password || '';
+            const realCvv = item.extraDetail || item.extradetail || '';
+            const expiryDateVal = item.expiryDate || item.expirydate || '';
+            
+            const pwdId = `pwd-${index}-${Date.now()}`;
+            const cvvId = `cvv-${index}-${Date.now()}`;
             const itemUniqueId = item.id;
+            
+            const identifierVal = item.identifier || 'N/A';
+            const phoneVal = item.phoneNumber || item.phonenumber || '';
+            const profileLinkVal = item.profileLink || item.profilelink || '';
+            const subTypeVal = item.bankingSubType || item.bankingsubtype || '';
+            const subTypeBadge = subTypeVal ? `<span class="record-badge" style="background:#2980b9; margin-left: 5px;">${subTypeVal}</span>` : '';
+
+            const holderVal = item.holderName || item.holdername || '';
+            const cardBankVal = item.cardBankName || item.cardbankname || '';
+            const cryptoAccVal = item.cryptoAccount || item.cryptoaccount || '';
+            const cryptoCardVal = item.cryptoCard || item.cryptocard || '';
 
             card.innerHTML = `
-                <span class="record-badge">${item.category || 'General'}</span>
+                <div>
+                    <span class="record-badge">${item.category || 'General'}</span>
+                    ${subTypeBadge}
+                </div>
                 <div class="record-title">
                     <i class="fa-solid fa-shield-halved"></i> ${item.platform || 'Account'}
                 </div>
-                ${item.holderName ? `<div class="record-field"><strong>Holder:</strong> ${item.holderName}</div>` : ''}
-                <div class="record-field"><strong>Identifier:</strong> ${item.identifier || item.accountIdentifier || 'N/A'}</div>
-                ${item.extraDetail ? `<div class="record-field"><strong>Extra:</strong> ${item.extraDetail}</div>` : ''}
+                ${holderVal ? `<div class="record-field"><strong>Holder:</strong> ${holderVal}</div>` : ''}
+                ${cardBankVal ? `<div class="record-field"><strong>Card Bank:</strong> ${cardBankVal}</div>` : ''}
+                ${cryptoAccVal ? `<div class="record-field"><strong>Crypto Account:</strong> ${cryptoAccVal}</div>` : ''}
+                ${cryptoCardVal ? `<div class="record-field"><strong>Crypto Card:</strong> ${cryptoCardVal}</div>` : ''}
+                <div class="record-field"><strong>Number/Identifier:</strong> ${identifierVal}</div>
+                ${phoneVal ? `<div class="record-field"><strong>Phone Number:</strong> ${phoneVal}</div>` : ''}
+                ${item.email ? `<div class="record-field"><strong>Email:</strong> ${item.email}</div>` : ''}
+                ${expiryDateVal ? `<div class="record-field"><strong>Expiry Date:</strong> ${expiryDateVal}</div>` : ''}
+                ${profileLinkVal ? `<div class="record-field"><strong>Profile Link:</strong> <a href="${profileLinkVal.startsWith('http') ? profileLinkVal : 'https://' + profileLinkVal}" target="_blank">${profileLinkVal}</a></div>` : ''}
                 
-                <div class="record-field password-field-wrapper">
-                    <strong>Password/PIN:</strong> 
-                    <span id="${recordId}" class="password-masked" data-secret="${realPassword}">••••••••</span>
-                    <button class="eye-toggle-btn" data-target="${recordId}" title="Show Password">
-                        <i class="fa-solid fa-eye"></i>
-                    </button>
-                </div>
+                ${realCvv ? `
+                    <div class="record-field password-field-wrapper">
+                        <strong>CVV:</strong> 
+                        <span id="${cvvId}" class="password-masked" data-secret="${realCvv}">•••</span>
+                        <button class="eye-toggle-btn" data-target="${cvvId}" title="Show CVV">
+                            <i class="fa-solid fa-eye"></i>
+                        </button>
+                    </div>
+                ` : ''}
+                
+                ${realPassword ? `
+                    <div class="record-field password-field-wrapper">
+                        <strong>Password/PIN:</strong> 
+                        <span id="${pwdId}" class="password-masked" data-secret="${realPassword}">••••••••</span>
+                        <button class="eye-toggle-btn" data-target="${pwdId}" title="Show Password">
+                            <i class="fa-solid fa-eye"></i>
+                        </button>
+                    </div>
+                ` : ''}
 
                 ${item.notes ? `<div class="record-field"><strong>Notes:</strong> ${item.notes}</div>` : ''}
                 
@@ -437,223 +820,164 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         document.querySelectorAll('.eye-toggle-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const targetId = btn.getAttribute('data-target');
-                const pwdSpan = document.getElementById(targetId);
-                const icon = btn.querySelector('i');
-                const realSecret = pwdSpan.getAttribute('data-secret');
+            btn.addEventListener('click', function() {
+                const targetId = this.getAttribute('data-target');
+                const span = document.getElementById(targetId);
+                const icon = this.querySelector('i');
+                if (!span) return;
 
-                if (pwdSpan.classList.contains('password-masked')) {
-                    pwdSpan.innerText = realSecret;
-                    pwdSpan.classList.remove('password-masked');
-                    if (icon) icon.className = 'fa-solid fa-eye-slash';
+                const realSecret = span.getAttribute('data-secret');
 
-                    if (activeTimers[targetId]) clearTimeout(activeTimers[targetId]);
+                if (activeTimers[targetId]) {
+                    clearTimeout(activeTimers[targetId]);
+                    delete activeTimers[targetId];
+                }
+
+                if (span.innerText === '••••••••' || span.innerText === '•••') {
+                    span.innerText = realSecret;
+                    icon.classList.remove('fa-eye');
+                    icon.classList.add('fa-eye-slash');
 
                     activeTimers[targetId] = setTimeout(() => {
-                        hidePassword(pwdSpan, icon);
+                        span.innerText = span.getAttribute('data-secret').length === 3 ? '•••' : '••••••••';
+                        icon.classList.remove('fa-eye-slash');
+                        icon.classList.add('fa-eye');
+                        delete activeTimers[targetId];
                     }, 10000);
-
                 } else {
-                    hidePassword(pwdSpan, icon);
-                    if (activeTimers[targetId]) clearTimeout(activeTimers[targetId]);
+                    span.innerText = span.getAttribute('data-secret').length === 3 ? '•••' : '••••••••';
+                    icon.classList.remove('fa-eye-slash');
+                    icon.classList.add('fa-eye');
                 }
             });
         });
 
-        document.querySelectorAll('.edit-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const id = btn.getAttribute('data-id');
-                const record = allRecords.find(r => r.id == id);
-                if (record) populateEditForm(record);
-            });
-        });
+        const deleteModal = document.getElementById('deleteModal') || document.querySelector('.modal-overlay') || document.querySelector('.custom-modal');
+        const confirmDeleteBtn = document.getElementById('confirmDeleteBtn') || document.querySelector('.btn-danger') || document.querySelector('.yes-delete-btn');
+        const cancelDeleteBtn = document.getElementById('cancelDeleteBtn') || document.querySelector('.btn-cancel') || document.querySelector('.cancel-btn');
+
+        let recordToDeleteId = null;
 
         document.querySelectorAll('.delete-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                targetDeleteId = btn.getAttribute('data-id');
-                openDeleteModal();
-            });
-        });
-    }
-
-    function hidePassword(pwdSpan, icon) {
-        if (pwdSpan) {
-            pwdSpan.innerText = '••••••••';
-            pwdSpan.classList.add('password-masked');
-        }
-        if (icon) icon.className = 'fa-solid fa-eye';
-    }
-
-    function populateEditForm(record) {
-        switchToHome();
-        
-        if (editRecordIdInput) editRecordIdInput.value = record.id || '';
-        if (categorySelect) categorySelect.value = record.category;
-        
-        const category = record.category;
-        if (accountTypeSelect) {
-            accountTypeSelect.innerHTML = '<option value="" disabled selected>Select Service</option>';
-            if (serviceOptions[category]) {
-                serviceOptions[category].forEach(service => {
-                    const opt = document.createElement('option');
-                    opt.value = service;
-                    opt.innerText = service;
-                    if (service === record.platform) opt.selected = true;
-                    accountTypeSelect.appendChild(opt);
-                });
-            }
-        }
-
-        renderDynamicFields(category, record);
-
-        const extraNotes = document.getElementById('extraNotes');
-        if (extraNotes) extraNotes.value = record.notes || '';
-
-        if (formTitle) formTitle.innerHTML = `<i class="fa-solid fa-pen-to-square"></i> Edit Credential Details`;
-        if (submitFormBtn) submitFormBtn.innerHTML = `<i class="fa-solid fa-pen"></i> Update Credential`;
-        if (cancelEditBtn) cancelEditBtn.style.display = 'block';
-    }
-
-    // 6. Delete Warning Modal Logic
-    const deleteModal = document.getElementById('deleteModal');
-    const cancelDeleteBtn = document.getElementById('cancelDeleteBtn');
-    const confirmDeleteBtn = document.getElementById('confirmDeleteBtn');
-
-    function openDeleteModal() {
-        if (deleteModal) deleteModal.style.display = 'flex';
-    }
-
-    function closeDeleteModal() {
-        if (deleteModal) deleteModal.style.display = 'none';
-        targetDeleteId = null;
-    }
-
-    if (cancelDeleteBtn) cancelDeleteBtn.addEventListener('click', closeDeleteModal);
-
-    if (confirmDeleteBtn) {
-        confirmDeleteBtn.addEventListener('click', async () => {
-            if (!targetDeleteId) return;
-
-            // ১. Supabase থেকে ডিলিট করা
-            try {
-                if (supabaseClient) {
-                    const { error } = await supabaseClient
-                        .from('credentials')
-                        .delete()
-                        .eq('id', targetDeleteId);
-                    if (error) throw error;
+            btn.addEventListener('click', function() {
+                recordToDeleteId = this.getAttribute('data-id');
+                
+                if (deleteModal) {
+                    deleteModal.style.display = 'flex';
+                    deleteModal.classList.add('active');
+                } else {
+                    const modals = document.querySelectorAll('.modal');
+                    modals.forEach(m => m.style.display = 'flex');
                 }
-            } catch (err) {
-                console.warn("Delete Supabase sync notice:", err);
-            }
-
-            // ২. LocalStorage থেকেও রেকর্ড রিমুভ করা
-            let localRecords = [];
-            try {
-                localRecords = JSON.parse(localStorage.getItem('vault_records') || '[]');
-            } catch(e) {}
-
-            localRecords = localRecords.filter(r => r.id !== targetDeleteId && r._id !== targetDeleteId);
-            localStorage.setItem('vault_records', JSON.stringify(localRecords));
-
-            // ৩. সরাসরি গ্লোবাল অল-রেকর্ড থেকেও ফিল্টার করে দেওয়া
-            allRecords = allRecords.filter(r => r.id !== targetDeleteId && r._id !== targetDeleteId);
-
-            closeDeleteModal();
-            renderRecords(allRecords); // পেজ ডেটা রি-রেন্ডার করা
-        });
-    }
-
-    const searchInput = document.getElementById('searchInput');
-    if (searchInput) {
-        searchInput.addEventListener('input', (e) => {
-            const query = e.target.value.toLowerCase().trim();
-            const filtered = allRecords.filter(item => {
-                return (item.platform && item.platform.toLowerCase().includes(query)) ||
-                       (item.category && item.category.toLowerCase().includes(query)) ||
-                       (item.identifier && item.identifier.toLowerCase().includes(query)) ||
-                       (item.holderName && item.holderName.toLowerCase().includes(query)) ||
-                       (item.notes && item.notes.toLowerCase().includes(query));
             });
-            renderRecords(filtered);
         });
-    }
 
-    // 7. Real-time Account Status Check
-    let isStatusModalShown = false;
+        if (cancelDeleteBtn) {
+            cancelDeleteBtn.addEventListener('click', () => {
+                recordToDeleteId = null;
+                if (deleteModal) {
+                    deleteModal.style.display = 'none';
+                    deleteModal.classList.remove('active');
+                } else {
+                    document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
+                }
+            });
+        }
 
-    function triggerCustomStatusModal(statusText) {
-        if (isStatusModalShown) return;
-        isStatusModalShown = true;
+        if (confirmDeleteBtn) {
+            const newConfirmBtn = confirmDeleteBtn.cloneNode(true);
+            confirmDeleteBtn.parentNode.replaceChild(newConfirmBtn, confirmDeleteBtn);
 
-        const statusModal = document.getElementById('statusAlertModal');
-        const statusTitle = document.getElementById('statusAlertTitle');
-        const statusMessage = document.getElementById('statusAlertMessage');
-        const countdownElem = document.getElementById('countdownTimer');
+            newConfirmBtn.addEventListener('click', async function() {
+                if (!recordToDeleteId) return;
 
-        const formattedStatus = statusText.toUpperCase();
-
-        if (statusTitle) statusTitle.innerText = `Account Alert: ${formattedStatus}`;
-        if (statusMessage) statusMessage.innerText = `Your account status is "${formattedStatus}". You have been logged out.`;
-
-        if (statusModal) statusModal.style.display = 'flex';
-
-        localStorage.removeItem('safePassUser');
-        localStorage.removeItem('user');
-        localStorage.removeItem('isLoggedIn');
-        localStorage.removeItem('activeTab');
-        sessionStorage.clear();
-
-        let secondsRemaining = 5;
-        const intervalId = setInterval(() => {
-            secondsRemaining--;
-            if (countdownElem) countdownElem.innerText = secondsRemaining;
-
-            if (secondsRemaining <= 0) {
-                clearInterval(intervalId);
-                window.location.href = 'index.html';
-            }
-        }, 1000);
-    }
-
-    function startAccountStatusCheck() {
-        const userIdVal = loggedInUser.userId || '';
-        const idVal = loggedInUser.id || '';
-        const emailVal = loggedInUser.email || '';
-        const phoneVal = loggedInUser.phoneNumber || loggedInUser.phone || '';
-
-        if (!userIdVal && !idVal && !emailVal && !phoneVal) return;
-
-        setInterval(async () => {
-            try {
-                if (supabaseClient) {
-                    let query = supabaseClient.from('users').select('status');
-                    let conditions = [];
-                    if (userIdVal) conditions.push(`userId.eq.${userIdVal}`);
-                    if (idVal) conditions.push(`id.eq.${idVal}`);
-                    if (emailVal) conditions.push(`email.eq.${emailVal}`);
-                    if (phoneVal) conditions.push(`phoneNumber.eq.${phoneVal}`);
-
-                    if (conditions.length > 0) {
-                        query = query.or(conditions.join(','));
+                try {
+                    if (supabaseClient) {
+                        const { error } = await supabaseClient
+                            .from('credentials')
+                            .delete()
+                            .eq('id', recordToDeleteId);
+                        if (error) console.error("Supabase delete error:", error);
                     }
+                } catch (err) {
+                    console.error("Delete exception:", err);
+                }
 
-                    const { data, error } = await query.maybeSingle();
+                let localRecords = [];
+                try {
+                    localRecords = JSON.parse(localStorage.getItem('vault_records') || '[]');
+                } catch (e) {}
 
-                    if (!error && data) {
-                        const status = (data.status || '').toString().toLowerCase();
-                        if (status && status !== 'active') {
-                            triggerCustomStatusModal(status);
+                localRecords = localRecords.filter(r => r.id !== recordToDeleteId && r._id !== recordToDeleteId);
+                localStorage.setItem('vault_records', JSON.stringify(localRecords));
+
+                if (deleteModal) {
+                    deleteModal.style.display = 'none';
+                    deleteModal.classList.remove('active');
+                } else {
+                    document.querySelectorAll('.modal').forEach(m => m.style.display = 'none');
+                }
+
+                recordToDeleteId = null;
+                loadVaultRecords();
+            });
+        }
+
+        document.querySelectorAll('.edit-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                const recordId = this.getAttribute('data-id');
+                const targetRecord = allRecords.find(r => r.id === recordId || r._id === recordId);
+                
+                if (!targetRecord) {
+                    alert("Record not found for editing.");
+                    return;
+                }
+
+                switchToHome();
+
+                if (categorySelect) {
+                    categorySelect.value = targetRecord.category || '';
+                    categorySelect.dispatchEvent(new Event('change'));
+                }
+
+                const subTypeValToEdit = targetRecord.bankingSubType || targetRecord.bankingsubtype || '';
+
+                if (targetRecord.category === 'Banking & Financial') {
+                    setTimeout(() => {
+                        const subTypeSelectElem = document.getElementById('bankingSubTypeSelect');
+                        if (subTypeSelectElem) {
+                            subTypeSelectElem.value = subTypeValToEdit;
+                            subTypeSelectElem.dispatchEvent(new Event('change'));
                         }
-                    }
-                }
-            } catch (err) {
-                console.warn("Live status check error:", err);
-            }
-        }, 3000);
-    }
 
-    startAccountStatusCheck();
+                        setTimeout(() => {
+                            if (accountTypeSelect) {
+                                accountTypeSelect.value = targetRecord.platform || '';
+                                accountTypeSelect.dispatchEvent(new Event('change'));
+                            }
+                            renderDynamicFields(targetRecord.category, subTypeValToEdit, targetRecord.platform, targetRecord);
+                        }, 50);
+                    }, 50);
+                } else {
+                    setTimeout(() => {
+                        if (accountTypeSelect) {
+                            accountTypeSelect.value = targetRecord.platform || '';
+                        }
+                        renderDynamicFields(targetRecord.category, '', targetRecord.platform, targetRecord);
+                    }, 50);
+                }
+
+                if (editRecordIdInput) editRecordIdInput.value = targetRecord.id || recordId;
+                if (formTitle) formTitle.innerHTML = `<i class="fa-solid fa-pen-to-square"></i> Edit Credential Details`;
+                if (submitFormBtn) submitFormBtn.innerHTML = `<i class="fa-solid fa-floppy-disk"></i> Update Vault Record`;
+                if (cancelEditBtn) cancelEditBtn.style.display = 'inline-block';
+                
+                const notesElem = document.getElementById('extraNotes');
+                if (notesElem) notesElem.value = targetRecord.notes || '';
+
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            });
+        });
+    }
 
 });
