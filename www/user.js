@@ -438,7 +438,14 @@ async function updateUserStatus(){
     try{
         if(!supabaseClient) throw new Error("Supabase client is not initialized.");
 
-        const {data,error}=await supabaseClient.from("users").update({status:newStatus}).eq("userId",currentUserId).select("*");
+        // Safe query matching both primary key types (UUID id or userId column)
+        let {data, error} = await supabaseClient.from("users").update({status:newStatus}).eq("userId", currentUserId).select("*");
+        if ((error || !data || !data.length) && currentUserId) {
+            const res = await supabaseClient.from("users").update({status:newStatus}).eq("id", currentUserId).select("*");
+            data = res.data;
+            error = res.error;
+        }
+
         if(error) throw error;
         if(!data||!data.length) throw new Error("No user record was updated. Check userId and Supabase RLS policy.");
 
@@ -458,7 +465,11 @@ async function updatePassword(){
     if(!input||!userData||!currentUserId)return;
     try{
         if(!supabaseClient) throw new Error("Supabase client is not initialized.");
-        const {error}=await supabaseClient.from("users").update({password:input.value}).eq("userId",currentUserId);
+        let {error}=await supabaseClient.from("users").update({password:input.value}).eq("userId",currentUserId);
+        if (error) {
+            const res = await supabaseClient.from("users").update({password:input.value}).eq("id",currentUserId);
+            error = res.error;
+        }
         if(error)throw error;
         userData.plainPassword=input.value; userData.password=input.value;
         localStorage.setItem("app_users_db",JSON.stringify([userData]));
@@ -470,7 +481,11 @@ async function deleteAccount(){
     if(!confirm("Are you sure you want to delete this user account completely?"))return;
     try{
         if(!supabaseClient)throw new Error("Supabase client is not initialized.");
-        const {error:userError}=await supabaseClient.from("users").delete().eq("userId",currentUserId);
+        let {error:userError}=await supabaseClient.from("users").delete().eq("userId",currentUserId);
+        if (userError) {
+            const res = await supabaseClient.from("users").delete().eq("id",currentUserId);
+            userError = res.error;
+        }
         if(userError)throw userError;
         const {error:credError}=await supabaseClient.from("credentials").delete().eq("userId",currentUserId);
         if(credError)console.warn("Credential deletion warning:",credError);
