@@ -59,23 +59,87 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let supabase = null;
 
-    if (window.supabase && typeof window.supabase.createClient === 'function') {
-        supabase = window.supabase.createClient(
+    // Mobile/WebView safe Supabase initialization.
+    // The same client configuration is used by the web app and mobile
+    // wrappers (Capacitor/Cordova/WebView), so the app talks to the same
+    // live Supabase project without requiring a separate mobile database.
+    const createSafePassSupabaseClient = () => {
+        if (!window.supabase || typeof window.supabase.createClient !== 'function') {
+            return null;
+        }
+
+        // Reuse a client already created by another SafePass script instead
+        // of creating duplicate clients in the same WebView/page.
+        if (window.SafePassSupabaseClient) {
+            return window.SafePassSupabaseClient;
+        }
+
+        const client = window.supabase.createClient(
             SUPABASE_URL,
             SUPABASE_ANON_KEY,
             {
                 auth: {
                     persistSession: true,
                     autoRefreshToken: true,
-                    detectSessionInUrl: true
+                    detectSessionInUrl: true,
+                    // Explicitly keep the Auth session in browser/WebView
+                    // storage so mobile app sessions survive page changes.
+                    storage: window.localStorage,
+                    storageKey: 'safepass-vault-auth',
+                    flowType: 'pkce'
+                },
+                global: {
+                    headers: {
+                        'x-client-info': 'safepass-vault-web-mobile'
+                    }
                 }
             }
         );
-    } else {
+
+        window.SafePassSupabaseClient = client;
+        window.SafePassSupabaseConfig = {
+            url: SUPABASE_URL,
+            anonKey: SUPABASE_ANON_KEY
+        };
+
+        return client;
+    };
+
+    supabase = createSafePassSupabaseClient();
+
+    if (!supabase) {
         console.error(
             'Supabase client library missing! Make sure the Supabase JS CDN script is included in HTML before script.js.'
         );
     }
+
+    // Keep mobile/web connectivity state in sync. This does not delete or
+    // alter vault data; it only helps the UI recover when a WebView goes
+    // offline and comes back online.
+    window.addEventListener('online', async () => {
+        if (!supabase) return;
+
+        try {
+            await supabase.auth.getSession();
+        } catch (error) {
+            console.warn('Supabase session refresh after reconnect failed:', error);
+        }
+    });
+
+    document.addEventListener('visibilitychange', async () => {
+        if (document.visibilityState !== 'visible' || !supabase) return;
+
+        try {
+            await supabase.auth.getSession();
+        } catch (error) {
+            console.warn('Supabase session check failed:', error);
+        }
+    });
+
+    // Expose the authenticated client for other SafePass pages and a mobile
+    // WebView bridge. No service-role key is exposed here; this is the public
+    // publishable/anon client only.
+    window.getSafePassSupabase = () => supabase;
 
     // ==========================================
     // Form & Input Elements
@@ -481,31 +545,6 @@ document.addEventListener('DOMContentLoaded', () => {
             authEmail: row.authEmail ?? row.auth_email ?? row.email ?? '',
             status: row.status ?? ''
         };
-    };
-
-    // ==========================================
-    // Legacy account Auth bootstrap
-    // ==========================================
-    // Older SafePass accounts may already exist in public.users but not in
-    // Supabase Auth. The Edge Function validates the existing password on the
-    // server and creates/repairs the Auth account without exposing the
-    // service-role key to this browser.
-    const bootstrapLegacyAuthAccount = async (identifier, password) => {
-        const { data, error } = await supabase.functions.invoke(
-            'legacy-auth-bootstrap',
-            { body: { identifier, password } }
-        );
-
-        if (error) {
-            console.error('legacy-auth-bootstrap error:', error);
-            throw new Error('This older account needs migration. Please deploy the supplied legacy-auth-bootstrap Edge Function in Supabase.');
-        }
-
-        if (!data?.success || !data?.email) {
-            throw new Error(data?.message || 'Unable to migrate this older account.');
-        }
-
-        return String(data.email).trim().toLowerCase();
     };
 
     // ==========================================
@@ -1094,36 +1133,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 // public.users.password in the browser.
                 // ------------------------------------------
 
-                let authData = null;
-                let authError = null;
-
-                ({ data: authData, error: authError } =
-                    await supabase.auth.signInWithPassword({
-                        email: authEmail,
-                        password: String(password)
-                    }));
-
-                // Existing SafePass accounts created before Auth was wired in
-                // are migrated only after the normal Auth attempt fails.
-                if (authError || !authData?.user) {
-                    try {
-                        const migratedEmail =
-                            await bootstrapLegacyAuthAccount(
-                                identifier,
-                                String(password)
-                            );
-
-                        ({ data: authData, error: authError } =
-                            await supabase.auth.signInWithPassword({
-                                email: migratedEmail,
-                                password: String(password)
-                            }));
-                    } catch (migrationError) {
-                        throw authError || migrationError || new Error(
-                            'Unable to authenticate this account.'
-                        );
-                    }
-                }
+                const {
+                    data: authData,
+                    error: authError
+                } = await supabase.auth.signInWithPassword({
+                    email: authEmail,
+                    password: String(password)
+                });
 
                 if (authError || !authData?.user) {
                     throw authError || new Error(

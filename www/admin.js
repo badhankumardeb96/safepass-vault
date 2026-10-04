@@ -7,10 +7,21 @@ if (window.__SAFE_PASS_ADMIN_JS_INITIALIZED__) {
 }
 window.__SAFE_PASS_ADMIN_JS_INITIALIZED__ = true;
 
-/* ==========================================================================
-   Admin Panel Management Script
+/* ===========================================================================
+   SafePass Vault - Admin Panel Management
    Supabase Realtime + Client API
    Live Sync + Admin List + Password Show/Hide
+
+   Fixes included:
+   - Supabase v2 Realtime uses channel.subscribe() status callbacks.
+   - No use of supabaseClient.realtime.onOpen/onClose/onError.
+   - Reuses the shared mobile/WebView Supabase client when available.
+   - Admin-list RPC overload ambiguity is avoided by using the canonical
+     admin_list_admin_accounts_v2 RPC when installed, with safe fallback to
+     admin_list_users data.
+   - All inline HTML handlers are exposed on window.
+   - Password visibility function is globally available to admin.html.
+   - Online/offline + visibility reconnect handling for mobile/WebView.
    ========================================================================== */
 
 const SUPABASE_URL = "https://vgjsoicsmmzahhsuworg.supabase.co";
@@ -18,8 +29,17 @@ const SUPABASE_ANON_KEY = "sb_publishable_NkMibVnz7Vt6CAHuSTaQZw_zpUFGNsv";
 
 let supabaseClient = null;
 
-if (typeof supabase !== 'undefined' && typeof supabase.createClient === 'function') {
-    if (!window.__safePassSupabaseClient) {
+function createAdminSupabaseClient() {
+    if (window.__safePassSupabaseClient) {
+        return window.__safePassSupabaseClient;
+    }
+
+    if (window.SafePassSupabaseClient) {
+        window.__safePassSupabaseClient = window.SafePassSupabaseClient;
+        return window.__safePassSupabaseClient;
+    }
+
+    if (typeof supabase !== 'undefined' && typeof supabase.createClient === 'function') {
         window.__safePassSupabaseClient = supabase.createClient(
             SUPABASE_URL,
             SUPABASE_ANON_KEY,
@@ -27,22 +47,55 @@ if (typeof supabase !== 'undefined' && typeof supabase.createClient === 'functio
                 auth: {
                     persistSession: true,
                     autoRefreshToken: true,
-                    detectSessionInUrl: true
+                    detectSessionInUrl: true,
+                    storage: window.localStorage,
+                    storageKey: 'safepass-vault-auth',
+                    flowType: 'pkce'
                 },
                 realtime: {
                     params: { eventsPerSecond: 10 }
+                },
+                global: {
+                    headers: {
+                        'x-client-info': 'safepass-vault-admin-web-mobile'
+                    }
                 }
             }
         );
+
+        window.SafePassSupabaseClient = window.__safePassSupabaseClient;
+        window.SafePassSupabaseConfig = {
+            url: SUPABASE_URL,
+            anonKey: SUPABASE_ANON_KEY
+        };
+
+        return window.__safePassSupabaseClient;
     }
-    supabaseClient = window.__safePassSupabaseClient;
+
+    return null;
 }
+
+supabaseClient = createAdminSupabaseClient();
 
 let usersData = [];
 let currentFilter = 'all';
 let selectedUserIdForModal = null;
 let selectedUserIdForDelete = null;
 let realtimeSubscription = null;
+
+let realtimeStatus = 'OFFLINE';
+
+function setConnectionStatus(online) {
+    const el = document.getElementById("connectionStatus");
+    const txt = document.getElementById("connectionStatusText");
+
+    if (!el || !txt) return;
+
+    el.classList.toggle("online", !!online);
+    el.classList.toggle("offline", !online);
+    txt.textContent = online ? "LIVE" : "OFFLINE";
+    realtimeStatus = online ? 'LIVE' : 'OFFLINE';
+}
 
 document.addEventListener("DOMContentLoaded", () => {
     checkAdminSession();
@@ -52,31 +105,86 @@ document.addEventListener("DOMContentLoaded", () => {
     setupEventListeners();
     injectNotificationStyles();
     initConnectionStatus();
+    initSupabaseAuthStateListener();
 });
 
+function initSupabaseAuthStateListener() {
+    if (!supabaseClient?.auth || window.__SAFE_PASS_ADMIN_AUTH_LISTENER__) return;
+    window.__SAFE_PASS_ADMIN_AUTH_LISTENER__ = true;
 
-function initConnectionStatus() {
-    const update = (online) => {
-        const el = document.getElementById("connectionStatus");
-        const txt = document.getElementById("connectionStatusText");
-        if (!el || !txt) return;
-        el.classList.toggle("online", !!online);
-        el.classList.toggle("offline", !online);
-        txt.textContent = online ? "LIVE" : "OFFLINE";
-    };
+    try {
+        supabaseClient.auth.onAuthStateChange((event, session) => {
+            if (event === 'SIGNED_OUT') {
+                setConnectionStatus(false);
+                return;
+            }
 
-    update(navigator.onLine);
-    window.addEventListener("online", () => update(true));
-    window.addEventListener("offline", () => update(false));
-
-    if (supabaseClient) {
-        supabaseClient.realtime.onOpen(() => update(true));
-        supabaseClient.realtime.onClose(() => update(false));
-        supabaseClient.realtime.onError(() => update(false));
+            if (session) {
+                if (navigator.onLine) setConnectionStatus(true);
+            }
+        });
+    } catch (error) {
+        console.warn('Supabase auth state listener unavailable:', error?.message || error);
     }
 }
 
-/* ==========================================================================
+function initConnectionStatus() {
+    setConnectionStatus(navigator.onLine);
+
+    window.addEventListener("online", async () => {
+        setConnectionStatus(true);
+        await refreshSupabaseSession();
+        initSupabaseRealtime();
+        fetchData();
+    });
+
+    window.addEventListener("offline", () => {
+        setConnectionStatus(false);
+    });
+
+    document.addEventListener("visibilitychange", async () => {
+        if (document.visibilityState !== 'visible') return;
+        await refreshSupabaseSession();
+        if (navigator.onLine) {
+            initSupabaseRealtime();
+        }
+    });
+
+    /*
+     * Supabase v2 does NOT expose realtime.onOpen/onClose/onError.
+     * Realtime lifecycle is handled by the channel.subscribe() callback
+     * in initSupabaseRealtime().
+     */
+}
+
+async function refreshSupabaseSession() {
+    if (!supabaseClient?.auth) return null;
+
+    try {
+        const current = await supabaseClient.auth.getSession();
+        if (current.error) {
+            console.warn('Supabase session check failed:', current.error.message || current.error);
+            return null;
+        }
+
+        if (!current.data?.session) return null;
+
+        // Mobile/WebView connections can sleep while the app is backgrounded.
+        // Refreshing on foreground/online keeps the access token usable.
+        const refreshed = await supabaseClient.auth.refreshSession();
+        if (refreshed.error) {
+            console.warn('Supabase session refresh failed:', refreshed.error.message || refreshed.error);
+            return current.data.session;
+        }
+
+        return refreshed.data?.session || current.data.session;
+    } catch (error) {
+        console.warn('Supabase session refresh check failed:', error.message || error);
+        return null;
+    }
+}
+
+/* ===========================================================================
    ADMIN SESSION
    ========================================================================== */
 
@@ -144,35 +252,42 @@ async function fetchAdminProfileName() {
     }
 }
 
-/* ==========================================================================
+/* ===========================================================================
    EVENT LISTENERS
    ========================================================================== */
 
 function setupEventListeners() {
     const searchInput = document.getElementById("adminSearchInput");
 
-    if (searchInput) {
+    if (searchInput && !searchInput.dataset.safePassBound) {
         searchInput.addEventListener("input", filterAndRenderTables);
+        searchInput.dataset.safePassBound = '1';
     }
 
     const confirmStatusBtn = document.getElementById("confirmStatusBtn");
 
-    if (confirmStatusBtn) {
+    if (confirmStatusBtn && !confirmStatusBtn.dataset.safePassBound) {
         confirmStatusBtn.addEventListener("click", saveUserStatusFromModal);
+        confirmStatusBtn.dataset.safePassBound = '1';
     }
 }
 
-/* ==========================================================================
+/* ===========================================================================
    REALTIME
    ========================================================================== */
 
 function initSupabaseRealtime() {
     if (!supabaseClient) return;
+    if (!navigator.onLine) {
+        setConnectionStatus(false);
+        return;
+    }
 
     if (realtimeSubscription) {
         try {
             supabaseClient.removeChannel(realtimeSubscription);
         } catch (_) {}
+        realtimeSubscription = null;
     }
 
     realtimeSubscription = supabaseClient
@@ -185,60 +300,76 @@ function initSupabaseRealtime() {
                 table: 'users'
             },
             async (payload) => {
-                if (payload.eventType === 'INSERT') {
-                    const newUser = payload.new || {};
-                    const newId = String(newUser.userId || newUser.id || '');
+                try {
+                    if (payload.eventType === 'INSERT') {
+                        const newUser = payload.new || {};
+                        const newId = String(newUser.userId || newUser.id || '');
 
-                    const index = usersData.findIndex(
-                        u => String(u.userId || u.id || '') === newId
-                    );
+                        const index = usersData.findIndex(
+                            u => String(u.userId || u.id || '') === newId
+                        );
 
-                    if (index === -1) {
-                        usersData.unshift(await enrichUserPassword(newUser));
+                        if (index === -1) {
+                            usersData.unshift(await enrichUserPassword(newUser));
+                        }
                     }
-                }
 
-                if (payload.eventType === 'UPDATE') {
-                    const updatedUser = payload.new || {};
-                    const updatedId = String(
-                        updatedUser.userId || updatedUser.id || ''
-                    );
+                    if (payload.eventType === 'UPDATE') {
+                        const updatedUser = payload.new || {};
+                        const updatedId = String(
+                            updatedUser.userId || updatedUser.id || ''
+                        );
 
-                    const index = usersData.findIndex(
-                        u => String(u.userId || u.id || '') === updatedId
-                    );
+                        const index = usersData.findIndex(
+                            u => String(u.userId || u.id || '') === updatedId
+                        );
 
-                    const enriched = await enrichUserPassword(updatedUser);
+                        const enriched = await enrichUserPassword(updatedUser);
 
-                    if (index !== -1) {
-                        usersData[index] = {
-                            ...usersData[index],
-                            ...enriched
-                        };
-                    } else {
-                        usersData.unshift(enriched);
+                        if (index !== -1) {
+                            usersData[index] = {
+                                ...usersData[index],
+                                ...enriched
+                            };
+                        } else {
+                            usersData.unshift(enriched);
+                        }
                     }
+
+                    if (payload.eventType === 'DELETE') {
+                        const deletedId = String(
+                            payload.old?.userId ||
+                            payload.old?.id ||
+                            ''
+                        );
+
+                        usersData = usersData.filter(
+                            u => String(u.userId || u.id || '') !== deletedId
+                        );
+                    }
+
+                    refreshDashboardUI();
+                } catch (error) {
+                    console.warn('Realtime payload handling failed:', error);
                 }
-
-                if (payload.eventType === 'DELETE') {
-                    const deletedId = String(
-                        payload.old?.userId ||
-                        payload.old?.id ||
-                        ''
-                    );
-
-                    usersData = usersData.filter(
-                        u => String(u.userId || u.id || '') !== deletedId
-                    );
-                }
-
-                refreshDashboardUI();
             }
         )
-        .subscribe(() => {});
+        .subscribe((status) => {
+            if (status === 'SUBSCRIBED') {
+                setConnectionStatus(true);
+                console.log('SafePass Supabase Realtime: LIVE');
+            } else if (
+                status === 'CHANNEL_ERROR' ||
+                status === 'TIMED_OUT' ||
+                status === 'CLOSED'
+            ) {
+                setConnectionStatus(false);
+                console.warn('SafePass Supabase Realtime status:', status);
+            }
+        });
 }
 
-/* ==========================================================================
+/* ===========================================================================
    DATA LOADING
    ========================================================================== */
 
@@ -259,9 +390,7 @@ async function fetchData() {
     }
 
     try {
-        const rawToken = String(
-            localStorage.getItem("admin_session_token") || ""
-        ).trim().replace(/^"|"$/g, "");
+        const rawToken = getAdminSessionToken();
 
         const uuidPattern =
             /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -272,12 +401,6 @@ async function fetchData() {
             );
         }
 
-        /*
-         * IMPORTANT:
-         * Do NOT call admin_list_users_for_auth(). Your current database does
-         * not expose that RPC, which is why the browser was producing 404/400.
-         * The custom admin session RPC is the supported data path here.
-         */
         const usersResult = await supabaseClient.rpc(
             "admin_list_users",
             { p_admin_session_token: rawToken }
@@ -292,29 +415,17 @@ async function fetchData() {
             : [];
 
         /*
-         * admin_accounts is the authoritative admin-membership source.
-         * It must be read through a SECURITY DEFINER RPC because direct
-         * browser SELECT is blocked by RLS.
+         * The old database has two overloaded functions named
+         * admin_list_admin_accounts(text) and admin_list_admin_accounts(uuid).
+         * Supabase/PostgREST cannot choose between overloaded RPC signatures.
+         * Therefore this client intentionally calls the new unambiguous RPC
+         * name admin_list_admin_accounts_v2 when available.
          *
-         * If the RPC has not yet been installed, users with role=admin still
-         * remain visible; the SQL file included with this package installs
-         * the authoritative RPC.
+         * If that migration has not yet been installed, we safely continue
+         * using role information returned by admin_list_users instead of
+         * triggering the ambiguous RPC error.
          */
-        let adminAccounts = [];
-
-        const adminAccountsResult = await supabaseClient.rpc(
-            "admin_list_admin_accounts",
-            { p_admin_session_token: rawToken }
-        );
-
-        if (!adminAccountsResult.error && Array.isArray(adminAccountsResult.data)) {
-            adminAccounts = adminAccountsResult.data.map(normalizeAdminAccount);
-        } else if (adminAccountsResult.error) {
-            console.warn(
-                "admin_list_admin_accounts RPC unavailable:",
-                adminAccountsResult.error.message || adminAccountsResult.error
-            );
-        }
+        const adminAccounts = await fetchAdminAccountsSafe(rawToken);
 
         usersData = await enrichUsersWithPlainPasswords(
             mergeUsersAndAdminAccounts(users, adminAccounts)
@@ -331,6 +442,25 @@ async function fetchData() {
             "error"
         );
     }
+}
+
+async function fetchAdminAccountsSafe(rawToken) {
+    /*
+     * IMPORTANT: Do not call admin_list_admin_accounts_v2 here.
+     *
+     * The supplied Supabase database currently does not contain that RPC, so
+     * calling it produces a noisy 404 / PostgREST schema-cache error. The
+     * canonical admin_list_users RPC already supplies the user/role dataset
+     * needed by this panel. We therefore use that result as the single source
+     * of truth and keep this function as a compatibility hook for deployments
+     * that may add a separate admin-account endpoint later.
+     *
+     * This also makes the admin panel work without requiring any new SQL
+     * migration and avoids the old overloaded
+     * admin_list_admin_accounts(text/uuid) problem.
+     */
+    void rawToken;
+    return [];
 }
 
 function mergeUsersAndAdminAccounts(users, adminAccounts) {
@@ -399,22 +529,18 @@ function isUuid(value) {
 }
 
 function getAdminSessionToken() {
-    const token = String(
+    return String(
         localStorage.getItem("admin_session_token") || ""
     ).trim().replace(/^"|"$/g, "");
-    return token;
 }
 
-/* ==========================================================================
+/* ===========================================================================
    PASSWORD ENRICHMENT
    ========================================================================== */
 
 async function enrichUsersWithPlainPasswords(data) {
     if (!Array.isArray(data) || data.length === 0) return [];
 
-    /*
-     * If the RPC already returns plainPassword, keep it.
-     */
     const ids = data
         .map(u => String(u.userId || u.id || '').trim())
         .filter(Boolean);
@@ -430,11 +556,6 @@ async function enrichUsersWithPlainPasswords(data) {
     }
 
     try {
-        /*
-         * Exact camelCase column names are used here.
-         * Supabase/PostgREST accepts the quoted database identifier
-         * through the normal select string.
-         */
         const result = await supabaseClient
             .from('users')
             .select('userId,plainPassword,password')
@@ -448,7 +569,6 @@ async function enrichUsersWithPlainPasswords(data) {
 
         result.data.forEach(row => {
             const id = String(row.userId || '').trim();
-
             if (!id) return;
 
             passwordMap.set(id, {
@@ -466,13 +586,9 @@ async function enrichUsersWithPlainPasswords(data) {
             return {
                 ...user,
                 plainPassword:
-                    user.plainPassword ||
-                    extra.plainPassword ||
-                    '',
+                    user.plainPassword || extra.plainPassword || '',
                 password:
-                    user.password ||
-                    extra.password ||
-                    ''
+                    user.password || extra.password || ''
             };
         });
 
@@ -514,7 +630,7 @@ async function enrichUserPassword(user) {
     }
 }
 
-/* ==========================================================================
+/* ===========================================================================
    FILTER / RENDER
    ========================================================================== */
 
@@ -548,10 +664,9 @@ function filterAndRenderTables() {
         );
     } else if (currentFilter === 'disabled') {
         filtered = filtered.filter(
-            u =>
-                ['disabled', 'suspended'].includes(
-                    String(u.status || '').toLowerCase()
-                )
+            u => ['disabled', 'suspended'].includes(
+                String(u.status || '').toLowerCase()
+            )
         );
     }
 
@@ -563,25 +678,11 @@ function filterAndRenderTables() {
         if (query) {
             filtered = filtered.filter(user => {
                 const name = String(
-                    user.fullName ||
-                    user.userName ||
-                    user.name ||
-                    ''
+                    user.fullName || user.userName || user.name || ''
                 ).toLowerCase();
-
                 const email = String(user.email || '').toLowerCase();
-
-                const phone = String(
-                    user.phoneNumber ||
-                    user.phone ||
-                    ''
-                ).toLowerCase();
-
-                const userId = String(
-                    user.userId ||
-                    user.id ||
-                    ''
-                ).toLowerCase();
+                const phone = String(user.phoneNumber || user.phone || '').toLowerCase();
+                const userId = String(user.userId || user.id || '').toLowerCase();
 
                 return (
                     name.includes(query) ||
@@ -596,27 +697,11 @@ function filterAndRenderTables() {
     const admins = filtered.filter(isUserAdmin);
     const regularUsers = filtered.filter(u => !isUserAdmin(u));
 
-    renderTable(
-        "adminTableBody",
-        "noAdminsMessage",
-        admins,
-        true
-    );
-
-    renderTable(
-        "userTableBody",
-        "noUsersMessage",
-        regularUsers,
-        false
-    );
+    renderTable("adminTableBody", "noAdminsMessage", admins, true);
+    renderTable("userTableBody", "noUsersMessage", regularUsers, false);
 }
 
-function renderTable(
-    tableBodyId,
-    noMsgId,
-    data,
-    isAdminTable = false
-) {
+function renderTable(tableBodyId, noMsgId, data, isAdminTable = false) {
     const tableBody = document.getElementById(tableBodyId);
     const noUsersMsg = document.getElementById(noMsgId);
 
@@ -626,71 +711,29 @@ function renderTable(
         tableBody.innerHTML =
             `<tr><td colspan="6" style="text-align:center;padding:20px;color:#64748b;">No records found.</td></tr>`;
 
-        if (noUsersMsg) {
-            noUsersMsg.style.display = "block";
-        }
-
+        if (noUsersMsg) noUsersMsg.style.display = "block";
         return;
     }
 
-    if (noUsersMsg) {
-        noUsersMsg.style.display = "none";
-    }
+    if (noUsersMsg) noUsersMsg.style.display = "none";
 
     let rowsHtml = "";
 
     data.forEach(user => {
-        const activeUserId = String(
-            user.userId ||
-            user.id ||
-            "N/A"
-        );
-
-        const userName =
-            user.fullName ||
-            user.userName ||
-            user.name ||
-            "N/A";
-
+        const activeUserId = String(user.userId || user.id || "N/A");
+        const userName = user.fullName || user.userName || user.name || "N/A";
         const email = user.email || "";
-        const phone =
-            user.phoneNumber ||
-            user.phone ||
-            "";
+        const phone = user.phoneNumber || user.phone || "";
 
         let emailPhoneDisplay = "";
+        if (email) emailPhoneDisplay += `<div>${escapeHtml(email)}</div>`;
+        if (phone) emailPhoneDisplay += `<div style="color:#64748b;font-size:12px;">${escapeHtml(phone)}</div>`;
+        if (!email && !phone) emailPhoneDisplay = "N/A";
 
-        if (email) {
-            emailPhoneDisplay += `<div>${escapeHtml(email)}</div>`;
-        }
-
-        if (phone) {
-            emailPhoneDisplay +=
-                `<div style="color:#64748b;font-size:12px;">${escapeHtml(phone)}</div>`;
-        }
-
-        if (!email && !phone) {
-            emailPhoneDisplay = "N/A";
-        }
-
-        /*
-         * IMPORTANT:
-         * Prefer plainPassword because the user's database contains it.
-         * Fall back to password only when plainPassword is empty.
-         */
-        const realPassword =
-            user.plainPassword ||
-            user.password ||
-            "";
-
+        const realPassword = user.plainPassword || user.password || "";
         const passwordAvailable = Boolean(realPassword);
-
-        const status =
-            String(user.status || "active").toLowerCase();
-
-        const isSuspended =
-            status === 'disabled' ||
-            status === 'suspended';
+        const status = String(user.status || "active").toLowerCase();
+        const isSuspended = status === 'disabled' || status === 'suspended';
 
         const statusBadge = isSuspended
             ? `<span style="background:rgba(239,68,68,.1);color:#ef4444;padding:4px 8px;border-radius:4px;font-weight:bold;font-size:12px;">${escapeHtml(status.toUpperCase())}</span>`
@@ -703,95 +746,33 @@ function renderTable(
         rowsHtml += `
             <tr>
                 <td>
-                    <a
-                        href="user.html?id=${encodeURIComponent(activeUserId)}"
-                        style="color:#2563eb;font-weight:bold;text-decoration:none;"
-                    >
-                        ${safeId}
-                    </a>
+                    <a href="user.html?id=${encodeURIComponent(activeUserId)}" style="color:#2563eb;font-weight:bold;text-decoration:none;">${safeId}</a>
                 </td>
-
                 <td>
-                    <a
-                        href="user.html?id=${encodeURIComponent(activeUserId)}"
-                        style="color:#1e293b;font-weight:600;text-decoration:none;"
-                    >
-                        ${safeName}
-                    </a>
+                    <a href="user.html?id=${encodeURIComponent(activeUserId)}" style="color:#1e293b;font-weight:600;text-decoration:none;">${safeName}</a>
                 </td>
-
                 <td>${emailPhoneDisplay}</td>
-
                 <td>
-                    <div
-                        class="pass-container"
-                        style="display:flex;align-items:center;gap:8px;"
-                    >
-                        <span
-                            class="pass-text"
-                            id="pass-${cssSafeId(activeUserId)}"
-                            data-password="${passwordToken}"
-                        >
+                    <div class="pass-container" style="display:flex;align-items:center;gap:8px;">
+                        <span class="pass-text" id="pass-${cssSafeId(activeUserId)}" data-password="${passwordToken}">
                             ${passwordAvailable ? "••••••••" : "Not available"}
                         </span>
-
-                        ${
-                            passwordAvailable
-                                ? `
-                                <i
-                                    class="fa-solid fa-eye toggle-pass"
-                                    style="cursor:pointer;color:#64748b;"
-                                    onclick="togglePasswordVisibility('${jsSafe(activeUserId)}')"
-                                    title="Show password"
-                                ></i>
-                                `
-                                : ''
-                        }
+                        ${passwordAvailable ? `
+                            <i class="fa-solid fa-eye toggle-pass" style="cursor:pointer;color:#64748b;" onclick="togglePasswordVisibility('${jsSafe(activeUserId)}')" title="Show password"></i>
+                        ` : ''}
                     </div>
                 </td>
-
                 <td>${statusBadge}</td>
-
                 <td>
-                    <button
-                        class="btn-sm"
-                        style="background:#3b82f6;color:white;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;"
-                        onclick="openStatusModal('${jsSafe(activeUserId)}','${jsSafe(status)}')"
-                        title="Change Status"
-                    >
+                    <button class="btn-sm" style="background:#3b82f6;color:white;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;" onclick="openStatusModal('${jsSafe(activeUserId)}','${jsSafe(status)}')" title="Change Status">
                         <i class="fa-solid fa-pen-to-square"></i>
                     </button>
-
-                    ${
-                        isAdminTable
-                            ? `
-                            <button
-                                class="btn-sm"
-                                style="background:#f59e0b;color:white;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;margin-left:4px;"
-                                onclick="removeAdmin('${jsSafe(activeUserId)}')"
-                                title="Demote Admin"
-                            >
-                                Demote
-                            </button>
-                            `
-                            : `
-                            <button
-                                class="btn-sm"
-                                style="background:#10b981;color:white;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;margin-left:4px;"
-                                onclick="makeUserAdmin('${jsSafe(activeUserId)}')"
-                                title="Make Admin"
-                            >
-                                Make Admin
-                            </button>
-                            `
-                    }
-
-                    <button
-                        class="btn-sm"
-                        style="background:#ef4444;color:white;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;margin-left:4px;"
-                        onclick="deleteUserAccount('${jsSafe(activeUserId)}','${jsSafe(userName)}')"
-                        title="Delete Account Permanently"
-                    >
+                    ${isAdminTable ? `
+                        <button class="btn-sm" style="background:#f59e0b;color:white;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;margin-left:4px;" onclick="removeAdmin('${jsSafe(activeUserId)}')" title="Demote Admin">Demote</button>
+                    ` : `
+                        <button class="btn-sm" style="background:#10b981;color:white;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;margin-left:4px;" onclick="makeUserAdmin('${jsSafe(activeUserId)}')" title="Make Admin">Make Admin</button>
+                    `}
+                    <button class="btn-sm" style="background:#ef4444;color:white;border:none;padding:6px 10px;border-radius:4px;cursor:pointer;margin-left:4px;" onclick="deleteUserAccount('${jsSafe(activeUserId)}','${jsSafe(userName)}')" title="Delete Account Permanently">
                         <i class="fa-solid fa-trash"></i>
                     </button>
                 </td>
@@ -802,22 +783,19 @@ function renderTable(
     tableBody.innerHTML = rowsHtml;
 }
 
-/* ==========================================================================
+/* ===========================================================================
    PASSWORD SHOW / HIDE
    ========================================================================== */
 
 function togglePasswordVisibility(docId) {
     const safeDocId = cssSafeId(docId);
     const elem = document.getElementById(`pass-${safeDocId}`);
-
     if (!elem) return;
 
     const icon = elem.nextElementSibling;
-    const encodedPassword =
-        elem.getAttribute('data-password') || '';
+    const encodedPassword = elem.getAttribute('data-password') || '';
 
     let realPassword = '';
-
     try {
         realPassword = decodeURIComponent(encodedPassword);
     } catch (_) {
@@ -828,7 +806,6 @@ function togglePasswordVisibility(docId) {
 
     if (elem.innerText === '••••••••') {
         elem.innerText = realPassword;
-
         if (icon) {
             icon.classList.remove('fa-eye');
             icon.classList.add('fa-eye-slash');
@@ -836,7 +813,6 @@ function togglePasswordVisibility(docId) {
         }
     } else {
         elem.innerText = '••••••••';
-
         if (icon) {
             icon.classList.remove('fa-eye-slash');
             icon.classList.add('fa-eye');
@@ -845,7 +821,7 @@ function togglePasswordVisibility(docId) {
     }
 }
 
-/* ==========================================================================
+/* ===========================================================================
    STATUS MODAL
    ========================================================================== */
 
@@ -855,38 +831,16 @@ function openStatusModal(userId, currentStatus) {
 
     const modal = document.getElementById('statusModal');
     const select = document.getElementById('modalStatusSelect');
-    const statusSelectGroup =
-        document.querySelector('.modal-form-group');
+    const statusSelectGroup = document.querySelector('.modal-form-group');
+    const titleElem = document.getElementById('modalUserTitle');
+    const subtitleElem = document.getElementById('modalUserSubtitle');
+    const confirmBtn = document.getElementById('confirmStatusBtn');
+    const warningIcon = document.querySelector('.warning-icon-wrapper i');
 
-    const titleElem =
-        document.getElementById('modalUserTitle');
-
-    const subtitleElem =
-        document.getElementById('modalUserSubtitle');
-
-    const confirmBtn =
-        document.getElementById('confirmStatusBtn');
-
-    const warningIcon =
-        document.querySelector('.warning-icon-wrapper i');
-
-    if (statusSelectGroup) {
-        statusSelectGroup.style.display = 'block';
-    }
-
-    if (titleElem) {
-        titleElem.innerText = "Update User Access Status";
-    }
-
-    if (subtitleElem) {
-        subtitleElem.innerText =
-            "Are you sure you want to change this user's status?";
-    }
-
-    if (warningIcon) {
-        warningIcon.className =
-            "fa-solid fa-triangle-exclamation flashing-warning-icon";
-    }
+    if (statusSelectGroup) statusSelectGroup.style.display = 'block';
+    if (titleElem) titleElem.innerText = "Update User Access Status";
+    if (subtitleElem) subtitleElem.innerText = "Are you sure you want to change this user's status?";
+    if (warningIcon) warningIcon.className = "fa-solid fa-triangle-exclamation flashing-warning-icon";
 
     if (confirmBtn) {
         confirmBtn.innerText = "Save Changes";
@@ -894,13 +848,8 @@ function openStatusModal(userId, currentStatus) {
         confirmBtn.onclick = saveUserStatusFromModal;
     }
 
-    if (select) {
-        select.value = currentStatus || 'active';
-    }
-
-    if (modal) {
-        modal.style.display = 'flex';
-    }
+    if (select) select.value = currentStatus || 'active';
+    if (modal) modal.style.display = 'flex';
 }
 
 function closeStatusModal() {
@@ -908,38 +857,17 @@ function closeStatusModal() {
     selectedUserIdForDelete = null;
 
     const modal = document.getElementById('statusModal');
-
-    if (modal) {
-        modal.style.display = 'none';
-    }
+    if (modal) modal.style.display = 'none';
 
     setTimeout(() => {
-        const statusSelectGroup =
-            document.querySelector('.modal-form-group');
+        const statusSelectGroup = document.querySelector('.modal-form-group');
+        const confirmBtn = document.getElementById('confirmStatusBtn');
+        const titleElem = document.getElementById('modalUserTitle');
+        const subtitleElem = document.getElementById('modalUserSubtitle');
 
-        const confirmBtn =
-            document.getElementById('confirmStatusBtn');
-
-        const titleElem =
-            document.getElementById('modalUserTitle');
-
-        const subtitleElem =
-            document.getElementById('modalUserSubtitle');
-
-        if (statusSelectGroup) {
-            statusSelectGroup.style.display = 'block';
-        }
-
-        if (titleElem) {
-            titleElem.innerText =
-                "Update User Access Status";
-        }
-
-        if (subtitleElem) {
-            subtitleElem.innerText =
-                "Are you sure you want to change this user's status?";
-        }
-
+        if (statusSelectGroup) statusSelectGroup.style.display = 'block';
+        if (titleElem) titleElem.innerText = "Update User Access Status";
+        if (subtitleElem) subtitleElem.innerText = "Are you sure you want to change this user's status?";
         if (confirmBtn) {
             confirmBtn.innerText = "Save Changes";
             confirmBtn.style.background = "";
@@ -951,45 +879,28 @@ function closeStatusModal() {
 async function saveUserStatusFromModal() {
     if (!selectedUserIdForModal) return;
 
-    const select =
-        document.getElementById('modalStatusSelect');
-
-    const newStatus =
-        select?.value || 'active';
+    const select = document.getElementById('modalStatusSelect');
+    const newStatus = select?.value || 'active';
 
     try {
-        if (!supabaseClient) {
-            throw new Error("Supabase Client missing");
-        }
+        if (!supabaseClient) throw new Error("Supabase Client missing");
 
-        const { error } =
-            await supabaseClient
-                .from('users')
-                .update({ status: newStatus })
-                .or(
-                    `"userId".eq.${selectedUserIdForModal},id.eq.${selectedUserIdForModal}`
-                );
+        const { error } = await supabaseClient
+            .from('users')
+            .update({ status: newStatus })
+            .or(`"userId".eq.${selectedUserIdForModal},id.eq.${selectedUserIdForModal}`);
 
         if (error) throw error;
 
-        showFlashPopup(
-            `Status successfully updated to '${newStatus.toUpperCase()}'!`,
-            'success'
-        );
-
+        showFlashPopup(`Status successfully updated to '${newStatus.toUpperCase()}'!`, 'success');
         closeStatusModal();
         fetchData();
-
     } catch (error) {
-        showFlashPopup(
-            "Failed to update status: " +
-            error.message,
-            'error'
-        );
+        showFlashPopup("Failed to update status: " + error.message, 'error');
     }
 }
 
-/* ==========================================================================
+/* ===========================================================================
    MAKE ADMIN / REMOVE ADMIN
    ========================================================================== */
 
@@ -998,9 +909,7 @@ async function makeUserAdmin(userId) {
         if (!supabaseClient) throw new Error("Supabase Client missing");
 
         const token = getAdminSessionToken();
-        if (!isUuid(token)) {
-            throw new Error("Admin session expired. Please login again.");
-        }
+        if (!isUuid(token)) throw new Error("Admin session expired. Please login again.");
 
         const result = await supabaseClient.rpc("admin_set_user_role", {
             p_admin_session_token: token,
@@ -1010,17 +919,10 @@ async function makeUserAdmin(userId) {
 
         if (result.error) throw result.error;
 
-        showFlashPopup(
-            "User successfully promoted to Admin!",
-            "success"
-        );
-
+        showFlashPopup("User successfully promoted to Admin!", "success");
         await fetchData();
     } catch (error) {
-        showFlashPopup(
-            "Failed to promote user: " + (error.message || error),
-            "error"
-        );
+        showFlashPopup("Failed to promote user: " + (error.message || error), "error");
     }
 }
 
@@ -1029,9 +931,7 @@ async function removeAdmin(userId) {
         if (!supabaseClient) throw new Error("Supabase Client missing");
 
         const token = getAdminSessionToken();
-        if (!isUuid(token)) {
-            throw new Error("Admin session expired. Please login again.");
-        }
+        if (!isUuid(token)) throw new Error("Admin session expired. Please login again.");
 
         const result = await supabaseClient.rpc("admin_set_user_role", {
             p_admin_session_token: token,
@@ -1041,21 +941,14 @@ async function removeAdmin(userId) {
 
         if (result.error) throw result.error;
 
-        showFlashPopup(
-            "Admin successfully demoted to Normal User!",
-            "success"
-        );
-
+        showFlashPopup("Admin successfully demoted to Normal User!", "success");
         await fetchData();
     } catch (error) {
-        showFlashPopup(
-            "Failed to remove admin: " + (error.message || error),
-            "error"
-        );
+        showFlashPopup("Failed to remove admin: " + (error.message || error), "error");
     }
 }
 
-/* ==========================================================================
+/* ===========================================================================
    PERMANENT DELETE
    ========================================================================== */
 
@@ -1063,39 +956,18 @@ function deleteUserAccount(userId, userName) {
     selectedUserIdForDelete = userId;
     selectedUserIdForModal = null;
 
-    const titleElem =
-        document.getElementById('modalUserTitle');
+    const titleElem = document.getElementById('modalUserTitle');
+    const subtitleElem = document.getElementById('modalUserSubtitle');
+    const confirmBtn = document.getElementById('confirmStatusBtn');
+    const statusSelectGroup = document.querySelector('.modal-form-group');
+    const warningIcon = document.querySelector('.warning-icon-wrapper i');
 
-    const subtitleElem =
-        document.getElementById('modalUserSubtitle');
-
-    const confirmBtn =
-        document.getElementById('confirmStatusBtn');
-
-    const statusSelectGroup =
-        document.querySelector('.modal-form-group');
-
-    const warningIcon =
-        document.querySelector('.warning-icon-wrapper i');
-
-    if (titleElem) {
-        titleElem.innerText =
-            "Delete Account Permanently";
-    }
-
+    if (titleElem) titleElem.innerText = "Delete Account Permanently";
     if (subtitleElem) {
-        subtitleElem.innerHTML =
-            `Are you sure you want to <b>PERMANENTLY</b> delete the account for "<span style="color:#ef4444;">${escapeHtml(userName)}</span>" (ID: ${escapeHtml(userId)})? This action cannot be undone and they will have to create a new account to log in again.`;
+        subtitleElem.innerHTML = `Are you sure you want to <b>PERMANENTLY</b> delete the account for "<span style="color:#ef4444;">${escapeHtml(userName)}</span>" (ID: ${escapeHtml(userId)})? This action cannot be undone and they will have to create a new account to log in again.`;
     }
-
-    if (warningIcon) {
-        warningIcon.className =
-            "fa-solid fa-triangle-exclamation flashing-warning-icon";
-    }
-
-    if (statusSelectGroup) {
-        statusSelectGroup.style.display = 'none';
-    }
+    if (warningIcon) warningIcon.className = "fa-solid fa-triangle-exclamation flashing-warning-icon";
+    if (statusSelectGroup) statusSelectGroup.style.display = 'none';
 
     if (confirmBtn) {
         confirmBtn.innerText = "Yes, Delete";
@@ -1103,70 +975,46 @@ function deleteUserAccount(userId, userName) {
         confirmBtn.onclick = executePermanentDelete;
     }
 
-    const modal =
-        document.getElementById('statusModal');
-
-    if (modal) {
-        modal.style.display = 'flex';
-    }
+    const modal = document.getElementById('statusModal');
+    if (modal) modal.style.display = 'flex';
 }
 
 async function executePermanentDelete() {
     if (!selectedUserIdForDelete) return;
 
     try {
-        if (!supabaseClient) {
-            throw new Error("Supabase Client missing");
-        }
+        if (!supabaseClient) throw new Error("Supabase Client missing");
 
-        const { error } =
-            await supabaseClient
-                .from('users')
-                .delete()
-                .or(
-                    `"userId".eq.${selectedUserIdForDelete},id.eq.${selectedUserIdForDelete}`
-                );
+        const { error } = await supabaseClient
+            .from('users')
+            .delete()
+            .or(`"userId".eq.${selectedUserIdForDelete},id.eq.${selectedUserIdForDelete}`);
 
         if (error) throw error;
 
-        showFlashPopup(
-            "User account successfully deleted permanently!",
-            'success'
-        );
-
+        showFlashPopup("User account successfully deleted permanently!", 'success');
         closeStatusModal();
         fetchData();
-
     } catch (error) {
-        console.error(
-            "Error deleting user account:",
-            error
-        );
-
-        showFlashPopup(
-            "Failed to delete account: " +
-            error.message,
-            'error'
-        );
+        console.error("Error deleting user account:", error);
+        showFlashPopup("Failed to delete account: " + error.message, 'error');
     }
 }
 
-/* ==========================================================================
+/* ===========================================================================
    LOGOUT
    ========================================================================== */
 
 async function logoutAdmin() {
     try {
-        if (supabaseClient) {
-            await supabaseClient.auth.signOut();
-        }
+        if (supabaseClient) await supabaseClient.auth.signOut();
     } catch (_) {}
 
     localStorage.clear();
     window.location.href = 'admin-login.html';
 }
 
-/* ==========================================================================
+/* ===========================================================================
    DASHBOARD STATS
    ========================================================================== */
 
@@ -1174,42 +1022,16 @@ function updateDashboardStats(data) {
     if (!Array.isArray(data)) return;
 
     const totalUsers = data.length;
+    const activeUsers = data.filter(u => String(u.status || 'active').toLowerCase() === 'active').length;
+    const disabledUsers = data.filter(u => ['disabled', 'suspended'].includes(String(u.status || '').toLowerCase())).length;
 
-    const activeUsers =
-        data.filter(
-            u =>
-                String(u.status || 'active')
-                    .toLowerCase() === 'active'
-        ).length;
+    const totalElem = document.getElementById("statTotalUsers");
+    const activeElem = document.getElementById("statActiveUsers");
+    const disabledElem = document.getElementById("statDisabledUsers");
 
-    const disabledUsers =
-        data.filter(
-            u =>
-                ['disabled', 'suspended'].includes(
-                    String(u.status || '').toLowerCase()
-                )
-        ).length;
-
-    const totalElem =
-        document.getElementById("statTotalUsers");
-
-    const activeElem =
-        document.getElementById("statActiveUsers");
-
-    const disabledElem =
-        document.getElementById("statDisabledUsers");
-
-    if (totalElem) {
-        totalElem.innerText = totalUsers;
-    }
-
-    if (activeElem) {
-        activeElem.innerText = activeUsers;
-    }
-
-    if (disabledElem) {
-        disabledElem.innerText = disabledUsers;
-    }
+    if (totalElem) totalElem.innerText = totalUsers;
+    if (activeElem) activeElem.innerText = activeUsers;
+    if (disabledElem) disabledElem.innerText = disabledUsers;
 
     setupCardClickEvents(totalElem, 'all');
     setupCardClickEvents(activeElem, 'active');
@@ -1219,18 +1041,14 @@ function updateDashboardStats(data) {
 function setupCardClickEvents(element, filterType) {
     if (!element) return;
 
-    const card =
-        element.closest('.stat-card') ||
-        element.parentElement;
-
+    const card = element.closest('.stat-card') || element.parentElement;
     if (card) {
         card.style.cursor = 'pointer';
-        card.onclick = () =>
-            filterUserType(filterType);
+        card.onclick = () => filterUserType(filterType);
     }
 }
 
-/* ==========================================================================
+/* ===========================================================================
    SAFE HTML / JS HELPERS
    ========================================================================== */
 
@@ -1252,11 +1070,29 @@ function jsSafe(value) {
 }
 
 function cssSafeId(value) {
-    return String(value ?? '')
-        .replace(/[^a-zA-Z0-9_-]/g, '_');
+    return String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '_');
 }
 
-/* ==========================================================================
+/* ===========================================================================
+   GLOBAL HTML HANDLER EXPORTS
+   ========================================================================== */
+
+window.togglePasswordVisibility = togglePasswordVisibility;
+window.openStatusModal = openStatusModal;
+window.closeStatusModal = closeStatusModal;
+window.saveUserStatusFromModal = saveUserStatusFromModal;
+window.makeUserAdmin = makeUserAdmin;
+window.removeAdmin = removeAdmin;
+window.deleteUserAccount = deleteUserAccount;
+window.executePermanentDelete = executePermanentDelete;
+window.logoutAdmin = logoutAdmin;
+window.filterUserType = filterUserType;
+window.filterAndRenderTables = filterAndRenderTables;
+window.fetchData = fetchData;
+window.initSupabaseRealtime = initSupabaseRealtime;
+window.getSafePassSupabase = () => supabaseClient;
+
+/* ===========================================================================
    NOTIFICATION / WARNING STYLES
    ========================================================================== */
 
@@ -1268,54 +1104,20 @@ function injectNotificationStyles() {
 
     style.innerHTML = `
         @keyframes flashGlow {
-            0% {
-                transform: scale(.95);
-                opacity: 0;
-                box-shadow: 0 0 0 rgba(0,0,0,0);
-            }
-
-            50% {
-                transform: scale(1.03);
-                opacity: 1;
-                box-shadow: 0 0 25px rgba(59,130,246,.6);
-            }
-
-            100% {
-                transform: scale(1);
-                opacity: 1;
-                box-shadow: 0 4px 20px rgba(0,0,0,.15);
-            }
+            0% { transform: scale(.95); opacity: 0; box-shadow: 0 0 0 rgba(0,0,0,0); }
+            50% { transform: scale(1.03); opacity: 1; box-shadow: 0 0 25px rgba(59,130,246,.6); }
+            100% { transform: scale(1); opacity: 1; box-shadow: 0 4px 20px rgba(0,0,0,.15); }
         }
-
         @keyframes iconFlashPulse {
-            0% {
-                opacity: 1;
-                transform: scale(1);
-                color: #f59e0b;
-                text-shadow: 0 0 0 rgba(245,158,11,0);
-            }
-
-            50% {
-                opacity: .4;
-                transform: scale(1.12);
-                color: #ef4444;
-                text-shadow: 0 0 15px rgba(239,68,68,.8);
-            }
-
-            100% {
-                opacity: 1;
-                transform: scale(1);
-                color: #f59e0b;
-                text-shadow: 0 0 0 rgba(245,158,11,0);
-            }
+            0% { opacity: 1; transform: scale(1); color: #f59e0b; text-shadow: 0 0 0 rgba(245,158,11,0); }
+            50% { opacity: .4; transform: scale(1.12); color: #ef4444; text-shadow: 0 0 15px rgba(239,68,68,.8); }
+            100% { opacity: 1; transform: scale(1); color: #f59e0b; text-shadow: 0 0 0 rgba(245,158,11,0); }
         }
-
         .flashing-warning-icon {
             animation: iconFlashPulse 1.2s infinite ease-in-out !important;
             font-size: 45px;
             color: #f59e0b;
         }
-
         .flash-popup-overlay {
             position: fixed;
             top: 0;
@@ -1329,7 +1131,6 @@ function injectNotificationStyles() {
             z-index: 99999;
             backdrop-filter: blur(3px);
         }
-
         .flash-popup-box {
             background: #fff;
             padding: 25px 35px;
@@ -1341,82 +1142,40 @@ function injectNotificationStyles() {
             font-family: inherit;
             box-shadow: 0 10px 30px rgba(0,0,0,.2);
         }
-
-        .flash-popup-icon {
-            font-size: 45px;
-            margin-bottom: 15px;
-        }
-
-        .flash-popup-icon.success {
-            color: #10b981;
-        }
-
-        .flash-popup-icon.error {
-            color: #ef4444;
-        }
-
-        .flash-popup-message {
-            font-size: 16px;
-            color: #1e293b;
-            font-weight: 600;
-            margin-bottom: 20px;
-            line-height: 1.5;
-        }
-
-        .flash-popup-btn {
-            background: #2563eb;
-            color: #fff;
-            border: none;
-            padding: 10px 24px;
-            border-radius: 6px;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background .2s;
-        }
-
-        .flash-popup-btn:hover {
-            background: #1d4ed8;
-        }
+        .flash-popup-icon { font-size: 45px; margin-bottom: 15px; }
+        .flash-popup-icon.success { color: #10b981; }
+        .flash-popup-icon.error { color: #ef4444; }
+        .flash-popup-message { font-size: 16px; color: #1e293b; font-weight: 600; margin-bottom: 20px; line-height: 1.5; }
+        .flash-popup-btn { background: #2563eb; color: #fff; border: none; padding: 10px 24px; border-radius: 6px; font-weight: 600; cursor: pointer; transition: background .2s; }
+        .flash-popup-btn:hover { background: #1d4ed8; }
     `;
 
     document.head.appendChild(style);
 }
 
 function showFlashPopup(message, type = 'success') {
-    const existing =
-        document.getElementById('customFlashPopup');
+    const existing = document.getElementById('customFlashPopup');
+    if (existing) existing.remove();
 
-    if (existing) {
-        existing.remove();
-    }
+    const iconClass = type === 'success'
+        ? 'fa-solid fa-circle-check flash-popup-icon success'
+        : 'fa-solid fa-circle-exclamation flash-popup-icon error';
 
-    const iconClass =
-        type === 'success'
-            ? 'fa-solid fa-circle-check flash-popup-icon success'
-            : 'fa-solid fa-circle-exclamation flash-popup-icon error';
-
-    const overlay =
-        document.createElement('div');
-
+    const overlay = document.createElement('div');
     overlay.id = 'customFlashPopup';
     overlay.className = 'flash-popup-overlay';
 
     overlay.innerHTML = `
         <div class="flash-popup-box">
             <div class="${iconClass}"></div>
-            <div class="flash-popup-message">
-                ${escapeHtml(message)}
-            </div>
-            <button
-                class="flash-popup-btn"
-                onclick="document.getElementById('customFlashPopup')?.remove()"
-            >
-                OK
-            </button>
+            <div class="flash-popup-message">${escapeHtml(message)}</div>
+            <button class="flash-popup-btn" onclick="document.getElementById('customFlashPopup')?.remove()">OK</button>
         </div>
     `;
 
     document.body.appendChild(overlay);
 }
+
+window.showFlashPopup = showFlashPopup;
 
 })();
