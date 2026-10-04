@@ -38,23 +38,27 @@ document.addEventListener("DOMContentLoaded", () => {
       - Realtime is used when available; polling remains as a fallback.
     */
 
-    const ACCOUNT_STATUS_TABLE_CANDIDATES = [
-        "users",
-        "user_profiles",
-        "profiles",
-        "accounts"
-    ];
+    /*
+      SafePass uses public.users for account management.  Older versions of
+      this file tried many possible table/column combinations.  That caused a
+      stream of PostgREST 400 errors whenever a guessed column did not exist.
 
-    const ACCOUNT_STATUS_ID_COLUMN_CANDIDATES = [
-        "userid",
-        "user_id",
+      We now read one real users row first, inspect its actual keys in memory,
+      and then make exactly one status query using the real column names.
+    */
+    const ACCOUNT_STATUS_TABLE = "users";
+
+    const ACCOUNT_STATUS_ID_COLUMN_PREFERENCES = [
         "userId",
+        "user_id",
+        "userid",
         "id"
     ];
 
-    const ACCOUNT_STATUS_COLUMN_CANDIDATES = [
+    const ACCOUNT_STATUS_COLUMN_PREFERENCES = [
         "status",
         "account_status",
+        "accountStatus",
         "accountstatus",
         "user_status",
         "state"
@@ -69,7 +73,6 @@ document.addEventListener("DOMContentLoaded", () => {
     let accountStatusCheckInProgress = false;
     let accountRestrictionHandled = false;
     let accountStatusGateActive = false;
-    let dashboardInitializedAfterStatus = false;
 
     /*
       Lock the dashboard while the server account status is checked.
@@ -464,69 +467,57 @@ document.addEventListener("DOMContentLoaded", () => {
             return null;
         }
 
-        const currentUserId =
-            normalizeUserId(
-                loggedInUser.userId ??
-                loggedInUser.userid ??
-                loggedInUser.user_id ??
-                loggedInUser.id ??
-                ""
-            );
+        const currentUserId = getCurrentUserId();
 
         if (!currentUserId) {
             return null;
         }
 
-        for (
-            const tableName
-            of ACCOUNT_STATUS_TABLE_CANDIDATES
-        ) {
-            for (
-                const idColumn
-                of ACCOUNT_STATUS_ID_COLUMN_CANDIDATES
-            ) {
-                for (
-                    const statusColumn
-                    of ACCOUNT_STATUS_COLUMN_CANDIDATES
-                ) {
-                    try {
-                        const result =
-                            await supabaseClient
-                                .from(tableName)
-                                .select(statusColumn)
-                                .eq(
-                                    idColumn,
-                                    currentUserId
-                                )
-                                .limit(1);
+        /*
+          IMPORTANT:
+          Fetch the real row shape once. This avoids probing invalid columns
+          such as user_id/userid/status/account_status and producing 400s.
+        */
+        try {
+            const result = await supabaseClient
+                .from(ACCOUNT_STATUS_TABLE)
+                .select("*")
+                .limit(1);
 
-                        if (
-                            !result.error &&
-                            Array.isArray(result.data) &&
-                            result.data.length > 0
-                        ) {
-                            // Require a matching row, not merely a valid
-                            // table/column combination. This avoids choosing
-                            // a UUID primary-key column when the app's 10-digit
-                            // user ID is stored in a separate userid column.
-                            return {
-                                tableName,
-                                idColumn,
-                                statusColumn
-                            };
-                        }
-                    } catch (error) {
-                        /*
-                          A failed combination normally means that this
-                          table/column combination does not exist or is not
-                          readable. Continue discovering the real schema.
-                        */
-                    }
-                }
+            if (result.error || !Array.isArray(result.data) || result.data.length === 0) {
+                return null;
             }
-        }
 
-        return null;
+            const sampleRow = result.data[0];
+            const keys = Object.keys(sampleRow);
+
+            const idColumn =
+                ACCOUNT_STATUS_ID_COLUMN_PREFERENCES.find(
+                    key => keys.includes(key)
+                ) || "";
+
+            const statusColumn =
+                ACCOUNT_STATUS_COLUMN_PREFERENCES.find(
+                    key => keys.includes(key)
+                ) || "";
+
+            if (!idColumn) {
+                return null;
+            }
+
+            /*
+              If the schema has no status field, the existing SafePass admin
+              code treats a missing status as active. Do not issue invalid
+              requests just to guess another column.
+            */
+            return {
+                tableName: ACCOUNT_STATUS_TABLE,
+                idColumn,
+                statusColumn
+            };
+        } catch (_) {
+            return null;
+        }
     }
 
     async function readCurrentAccountStatus() {
@@ -555,6 +546,36 @@ document.addEventListener("DOMContentLoaded", () => {
         }
 
         try {
+            /*
+              If no status column exists in this SafePass schema, the users
+              table itself is still the authoritative user list and the admin
+              UI defaults missing status to active. Avoid an invalid REST query.
+            */
+            if (!accountStatusConfig.statusColumn) {
+                const rowResult = await supabaseClient
+                    .from(accountStatusConfig.tableName)
+                    .select("*")
+                    .eq(
+                        accountStatusConfig.idColumn,
+                        currentUserId
+                    )
+                    .limit(1);
+
+                if (rowResult.error || !Array.isArray(rowResult.data) || !rowResult.data.length) {
+                    return "";
+                }
+
+                hideAccountStatusCheckingOverlay();
+
+                if (!accountStatusChannel) {
+                    initAccountStatusRealtime();
+                }
+
+                initDashboardRealtime();
+                loadVaultRecords();
+                return "active";
+            }
+
             const result =
                 await supabaseClient
                     .from(
@@ -570,11 +591,6 @@ document.addEventListener("DOMContentLoaded", () => {
                     .limit(1);
 
             if (result.error) {
-                console.error(
-                    "Account status query error:",
-                    result.error
-                );
-
                 return "";
             }
 
@@ -607,30 +623,12 @@ document.addEventListener("DOMContentLoaded", () => {
                 // Only allow dashboard interaction after a real user row and
                 // status field have been read successfully from Supabase.
                 hideAccountStatusCheckingOverlay();
-
-                /*
-                  IMPORTANT:
-                  Account-status polling runs every second. Do NOT reload and
-                  re-render the vault on every successful poll. Re-rendering
-                  replaces the password/CVV DOM nodes and makes an already
-                  revealed secret appear hidden before its 10-second timer
-                  finishes. The dashboard is initialized only once here;
-                  realtime vault updates handle later data changes.
-                */
-                if (!dashboardInitializedAfterStatus) {
-                    dashboardInitializedAfterStatus = true;
-                    initDashboardRealtime();
-                    loadVaultRecords();
-                }
+                initDashboardRealtime();
+                loadVaultRecords();
             }
 
             return status;
-        } catch (error) {
-            console.error(
-                "Unable to check account status:",
-                error
-            );
-
+        } catch (_) {
             return "";
         }
     }
@@ -699,18 +697,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     }
                 )
                 .subscribe(
-                    (status, error) => {
-                        console.log(
-                            "Account status realtime:",
-                            status
-                        );
-
-                        if (error) {
-                            console.error(
-                                "Account status realtime error:",
-                                error
-                            );
-                        }
+                    () => {
+                        /* Realtime status is intentionally silent in production UI. */
                     }
                 );
     }
@@ -773,19 +761,34 @@ document.addEventListener("DOMContentLoaded", () => {
         window.supabase &&
         typeof window.supabase.createClient === "function"
     ) {
-        supabaseClient = window.supabase.createClient(
-            SUPABASE_URL,
-            SUPABASE_ANON_KEY,
-            {
-                realtime: {
-                    params: {
-                        eventsPerSecond: 10
+        /*
+          Reuse a page-level SafePass client when another SafePass script has
+          already initialized one. This prevents multiple GoTrueClient
+          instances from sharing the same auth storage key.
+        */
+        if (
+            window.__safePassSupabaseClient &&
+            typeof window.__safePassSupabaseClient.from === "function"
+        ) {
+            supabaseClient =
+                window.__safePassSupabaseClient;
+        } else {
+            supabaseClient =
+                window.supabase.createClient(
+                    SUPABASE_URL,
+                    SUPABASE_ANON_KEY,
+                    {
+                        realtime: {
+                            params: {
+                                eventsPerSecond: 10
+                            }
+                        }
                     }
-                }
-            }
-        );
-    } else {
-        console.error("Supabase JS library was not loaded.");
+                );
+
+            window.__safePassSupabaseClient =
+                supabaseClient;
+        }
     }
 
 
@@ -2592,13 +2595,6 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     userid: currentUserId,
 
-                    // Permanent Auth ownership link. Legacy userid remains
-                    // untouched so all existing vault records keep working.
-                    owner_id:
-                        loggedInUser.auth_user_id ||
-                        loggedInUser.owner_id ||
-                        null,
-
                     userfullname:
                         getCurrentUserName(),
 
@@ -3660,12 +3656,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     }
                 )
                 .subscribe(
-                    status => {
-
-                        console.log(
-                            "Vault realtime status:",
-                            status
-                        );
+                    () => {
+                        /* Keep realtime connection details out of the console. */
                     }
                 );
     }
@@ -4108,8 +4100,6 @@ document.addEventListener("DOMContentLoaded", () => {
                                         data-secret="${escapeHTML(
                                             realCvv
                                         )}"
-                                        data-hidden-value="•••"
-                                        data-visible="false"
                                     >
                                         •••
                                     </span>
@@ -4148,8 +4138,6 @@ document.addEventListener("DOMContentLoaded", () => {
                                         data-secret="${escapeHTML(
                                             realPassword
                                         )}"
-                                        data-hidden-value="••••••••"
-                                        data-visible="false"
                                     >
                                         ••••••••
                                     </span>
@@ -4226,196 +4214,127 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
         /* ==================================================================
-           CARD / CONTROL INTERACTION STABILITY
-           ==================================================================
-           Eye/action controls must not trigger the parent card interaction.
-           No hover, mouse-leave, pointer-leave, blur, or focus handler is
-           allowed to change password/CVV visibility.
-        ================================================================== */
+           PASSWORD / CVV SHOW-HIDE
+           ================================================================== */
 
         document
             .querySelectorAll(
-                ".record-card .eye-toggle-btn, .record-card .action-btn"
+                ".eye-toggle-btn"
             )
-            .forEach(control => {
-
-                [
-                    "pointerdown",
-                    "mousedown",
-                    "touchstart"
-                ].forEach(eventName => {
-                    control.addEventListener(
-                        eventName,
-                        event => {
-                            event.stopPropagation();
-                        }
-                    );
-                });
-            });
-
-
-        /* ==================================================================
-           PASSWORD / CVV SHOW-HIDE
-           ==================================================================
-           Rules:
-           - Eye click is the ONLY action that changes visibility.
-           - First click shows the real value.
-           - Second click hides it immediately.
-           - After SHOW, auto-hide happens exactly 10 seconds later.
-           - Mouse movement, hover, leaving the card, focus changes, and
-             pointer movement never hide the value.
-           - Every SHOW click starts a fresh timer and every HIDE click
-             cancels the old timer.
-        ================================================================== */
-
-        document
-            .querySelectorAll(".eye-toggle-btn")
             .forEach(button => {
 
                 button.addEventListener(
                     "click",
-                    function (event) {
-
-                        event.preventDefault();
-                        event.stopPropagation();
+                    function () {
 
                         const targetId =
-                            this.getAttribute("data-target");
+                            this.getAttribute(
+                                "data-target"
+                            );
 
-                        if (!targetId) {
-                            return;
-                        }
 
                         const span =
-                            document.getElementById(targetId);
+                            document.getElementById(
+                                targetId
+                            );
+
+
+                        const icon =
+                            this.querySelector(
+                                "i"
+                            );
+
 
                         if (!span) {
                             return;
                         }
 
-                        const icon =
-                            this.querySelector("i");
 
                         const realSecret =
-                            span.getAttribute("data-secret") || "";
+                            span.getAttribute(
+                                "data-secret"
+                            ) || "";
 
-                        const hiddenValue =
-                            span.getAttribute("data-hidden-value") ||
-                            (realSecret.length === 3
-                                ? "•••"
-                                : "••••••••");
 
-                        const isVisible =
-                            span.dataset.visible === "true";
+                        if (
+                            activeTimers[
+                                targetId
+                            ]
+                        ) {
 
-                        /* Cancel only the timer belonging to this field. */
-                        if (activeTimers[targetId]) {
-                            window.clearTimeout(
-                                activeTimers[targetId]
+                            clearTimeout(
+                                activeTimers[
+                                    targetId
+                                ]
                             );
-                            delete activeTimers[targetId];
+
+                            delete activeTimers[
+                                targetId
+                            ];
                         }
 
-                        if (!isVisible) {
 
-                            /* ===============================
-                               SHOW
-                               =============================== */
-                            span.textContent = realSecret;
-                            span.dataset.visible = "true";
+                        const hiddenValue =
+                            realSecret.length === 3
+                                ? "•••"
+                                : "••••••••";
 
-                            if (icon) {
-                                icon.classList.remove("fa-eye");
-                                icon.classList.add("fa-eye-slash");
-                            }
 
-                            this.setAttribute(
-                                "title",
-                                targetId.indexOf("cvv-") === 0
-                                    ? "Hide CVV"
-                                    : "Hide Password"
+                        if (
+                            span.textContent.trim() ===
+                            hiddenValue
+                        ) {
+
+                            span.textContent =
+                                realSecret;
+
+
+                            icon.classList.remove(
+                                "fa-eye"
                             );
 
-                            /*
-                              Start exactly one 10-second timer from this
-                              click. Mouse movement cannot cancel it.
-                            */
-                            activeTimers[targetId] =
-                                window.setTimeout(() => {
+                            icon.classList.add(
+                                "fa-eye-slash"
+                            );
 
-                                    const currentSpan =
-                                        document.getElementById(targetId);
 
-                                    if (!currentSpan) {
-                                        delete activeTimers[targetId];
-                                        return;
-                                    }
+                            activeTimers[
+                                targetId
+                            ] =
+                                setTimeout(
+                                    () => {
 
-                                    /*
-                                      A stale timer must never hide a value
-                                      that was manually hidden/revealed later.
-                                    */
-                                    if (
-                                        currentSpan.dataset.visible === "true"
-                                    ) {
-                                        currentSpan.textContent =
-                                            currentSpan.getAttribute(
-                                                "data-hidden-value"
-                                            ) || hiddenValue;
+                                        span.textContent =
+                                            hiddenValue;
 
-                                        currentSpan.dataset.visible = "false";
+                                        icon.classList.remove(
+                                            "fa-eye-slash"
+                                        );
 
-                                        const currentButton =
-                                            document.querySelector(
-                                                `.eye-toggle-btn[data-target="${CSS.escape(targetId)}"]`
-                                            );
+                                        icon.classList.add(
+                                            "fa-eye"
+                                        );
 
-                                        const currentIcon =
-                                            currentButton
-                                                ? currentButton.querySelector("i")
-                                                : null;
+                                        delete activeTimers[
+                                            targetId
+                                        ];
 
-                                        if (currentIcon) {
-                                            currentIcon.classList.remove(
-                                                "fa-eye-slash"
-                                            );
-                                            currentIcon.classList.add(
-                                                "fa-eye"
-                                            );
-                                        }
-
-                                        if (currentButton) {
-                                            currentButton.setAttribute(
-                                                "title",
-                                                targetId.indexOf("cvv-") === 0
-                                                    ? "Show CVV"
-                                                    : "Show Password"
-                                            );
-                                        }
-                                    }
-
-                                    delete activeTimers[targetId];
-
-                                }, 10000);
+                                    },
+                                    10000
+                                );
 
                         } else {
 
-                            /* ===============================
-                               MANUAL HIDE
-                               =============================== */
-                            span.textContent = hiddenValue;
-                            span.dataset.visible = "false";
+                            span.textContent =
+                                hiddenValue;
 
-                            if (icon) {
-                                icon.classList.remove("fa-eye-slash");
-                                icon.classList.add("fa-eye");
-                            }
 
-                            this.setAttribute(
-                                "title",
-                                targetId.indexOf("cvv-") === 0
-                                    ? "Show CVV"
-                                    : "Show Password"
+                            icon.classList.remove(
+                                "fa-eye-slash"
+                            );
+
+                            icon.classList.add(
+                                "fa-eye"
                             );
                         }
                     }
