@@ -32,53 +32,26 @@ document.addEventListener("DOMContentLoaded", () => {
       server-side user record and also listens for realtime changes.
 
       IMPORTANT:
-      - The exact user table/column names can vary between SafePass builds.
-      - The code therefore discovers a compatible user table + userid/status
-        columns instead of hard-coding only one schema.
-      - Realtime is used when available; polling remains as a fallback.
-    */
-
     /*
-      SafePass uses public.users for account management.  Older versions of
-      this file tried many possible table/column combinations.  That caused a
-      stream of PostgREST 400 errors whenever a guessed column did not exist.
+       ACCOUNT STATUS GUARD
+       --------------------
+       Dashboard must NOT query public.users directly. The login page already
+       uses the server-side RPC `lookup_login_account`, so dashboard uses the
+       same RPC to read only the current account's safe status information.
 
-      We now read one real users row first, inspect its actual keys in memory,
-      and then make exactly one status query using the real column names.
+       This avoids the old `/rest/v1/users?...` 401 error and keeps the same
+       account-status behavior: Active accounts continue to dashboard;
+       Suspended / Blocked / Disabled accounts are signed out and redirected.
     */
-    const ACCOUNT_STATUS_TABLE = "users";
 
-    const ACCOUNT_STATUS_ID_COLUMN_PREFERENCES = [
-        "userId",
-        "user_id",
-        "userid",
-        "id"
-    ];
+    const ACCOUNT_STATUS_POLL_MS = 5000;
 
-    const ACCOUNT_STATUS_COLUMN_PREFERENCES = [
-        "status",
-        "account_status",
-        "accountStatus",
-        "accountstatus",
-        "user_status",
-        "state"
-    ];
-
-    // Check quickly after login and keep checking once per second as fallback.
-    const ACCOUNT_STATUS_POLL_MS = 1000;
-
-    let accountStatusConfig = null;
-    let accountStatusChannel = null;
     let accountStatusPollTimer = null;
     let accountStatusCheckInProgress = false;
     let accountRestrictionHandled = false;
     let accountStatusGateActive = false;
+    let accountStatusVerified = false;
 
-    /*
-      Lock the dashboard while the server account status is checked.
-      This prevents a restricted user from briefly using dashboard controls
-      after login while the status request is in flight.
-    */
     function showAccountStatusCheckingOverlay() {
         if (document.getElementById("safePassAccountStatusCheckingOverlay")) {
             accountStatusGateActive = true;
@@ -91,6 +64,7 @@ document.addEventListener("DOMContentLoaded", () => {
         overlay.id = "safePassAccountStatusCheckingOverlay";
         overlay.setAttribute("role", "status");
         overlay.setAttribute("aria-live", "polite");
+
         overlay.innerHTML = `
             <div class="safe-pass-status-checking-card">
                 <div class="safe-pass-status-checking-spinner" aria-hidden="true"></div>
@@ -123,8 +97,15 @@ document.addEventListener("DOMContentLoaded", () => {
                 text-align: center;
                 box-shadow: 0 18px 48px rgba(0,0,0,.28);
             }
-            #safePassAccountStatusCheckingOverlay strong { display: block; font-size: 17px; }
-            #safePassAccountStatusCheckingOverlay p { margin: 9px 0 0; color: #65727d; font-size: 14px; }
+            #safePassAccountStatusCheckingOverlay strong {
+                display: block;
+                font-size: 17px;
+            }
+            #safePassAccountStatusCheckingOverlay p {
+                margin: 9px 0 0;
+                color: #65727d;
+                font-size: 14px;
+            }
             #safePassAccountStatusCheckingOverlay .safe-pass-status-checking-spinner {
                 width: 34px;
                 height: 34px;
@@ -134,7 +115,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 border-radius: 50%;
                 animation: safePassStatusSpin .8s linear infinite;
             }
-            @keyframes safePassStatusSpin { to { transform: rotate(360deg); } }
+            @keyframes safePassStatusSpin {
+                to { transform: rotate(360deg); }
+            }
         `;
 
         document.head.appendChild(style);
@@ -144,18 +127,19 @@ document.addEventListener("DOMContentLoaded", () => {
     function hideAccountStatusCheckingOverlay() {
         const overlay = document.getElementById("safePassAccountStatusCheckingOverlay");
         const style = document.getElementById("safePassAccountStatusCheckingStyles");
+
         if (overlay) overlay.remove();
         if (style) style.remove();
+
         accountStatusGateActive = false;
     }
 
-    // Block keyboard/click/form actions until status verification finishes,
-    // and keep all interactions blocked after an account restriction is found.
     ["click", "submit", "keydown", "keypress", "keyup"].forEach(eventName => {
         document.addEventListener(eventName, event => {
             if (accountStatusGateActive || accountRestrictionHandled) {
                 event.preventDefault();
                 event.stopPropagation();
+
                 if (typeof event.stopImmediatePropagation === "function") {
                     event.stopImmediatePropagation();
                 }
@@ -186,10 +170,7 @@ document.addEventListener("DOMContentLoaded", () => {
             return "Your account is blocked.";
         }
 
-        if (
-            normalized === "disabled" ||
-            normalized === "disable"
-        ) {
+        if (normalized === "disabled" || normalized === "disable") {
             return "Your account is disabled.";
         }
 
@@ -199,33 +180,13 @@ document.addEventListener("DOMContentLoaded", () => {
     function clearLoginSessionForRestriction() {
         if (dashboardRealtimeSub && supabaseClient) {
             try {
-                supabaseClient.removeChannel(
-                    dashboardRealtimeSub
-                );
+                supabaseClient.removeChannel(dashboardRealtimeSub);
             } catch (error) {
-                console.warn(
-                    "Unable to remove dashboard realtime channel:",
-                    error
-                );
+                console.warn("Unable to remove dashboard realtime channel:", error);
             }
-
-            dashboardRealtimeSub = null;
         }
 
-        if (accountStatusChannel && supabaseClient) {
-            try {
-                supabaseClient.removeChannel(
-                    accountStatusChannel
-                );
-            } catch (error) {
-                console.warn(
-                    "Unable to remove account status channel:",
-                    error
-                );
-            }
-
-            accountStatusChannel = null;
-        }
+        dashboardRealtimeSub = null;
 
         if (accountStatusPollTimer) {
             clearInterval(accountStatusPollTimer);
@@ -234,17 +195,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
         localStorage.removeItem("safePassUser");
         localStorage.removeItem("user");
+        localStorage.removeItem("currentUser");
         localStorage.removeItem("isLoggedIn");
+        localStorage.removeItem("savedUserIdNumber");
         localStorage.removeItem("activeTab");
 
-        /*
-          IMPORTANT: Never delete vault data when an account is logged out
-          or force-logged-out because of account status. Vault records are
-          user data, not login-session data. The records remain in Supabase
-          and the local cache remains available for the same user after the
-          next login. The user can delete individual records from the vault
-          UI when they choose to do so.
-        */
+        if (supabaseClient && supabaseClient.auth) {
+            supabaseClient.auth.signOut().catch(error => {
+                console.warn("Supabase signOut after account restriction failed:", error);
+            });
+        }
+
+        /* Never delete vault records here. */
     }
 
     function showAccountRestrictionPopup(status) {
@@ -462,245 +424,167 @@ document.addEventListener("DOMContentLoaded", () => {
             }, 1000);
     }
 
-    async function findAccountStatusConfig() {
-        if (!supabaseClient) {
-            return null;
+    async function readCurrentAccountStatus() {
+        if (!supabaseClient || accountRestrictionHandled) {
+            return false;
         }
 
-        const currentUserId = getCurrentUserId();
+        const currentUserId = normalizeUserId(
+            loggedInUser.userId ??
+            loggedInUser.userid ??
+            loggedInUser.user_id ??
+            loggedInUser.id ??
+            ""
+        );
 
         if (!currentUserId) {
-            return null;
+            console.error("Account status check failed: invalid User ID.");
+            return false;
+        }
+
+        try {
+            /*
+               First confirm that the Supabase Auth session still exists.
+               The login page stores the session using the same custom
+               storageKey: `safepass-vault-auth`.
+            */
+            const { data: sessionData, error: sessionError } =
+                await supabaseClient.auth.getSession();
+
+            if (sessionError) {
+                console.error("Supabase session check failed:", sessionError);
+                return false;
+            }
+
+            if (!sessionData?.session?.user) {
+                console.warn("No active Supabase Auth session on dashboard.");
+                hideAccountStatusCheckingOverlay();
+                window.location.replace("index.html");
+                return false;
+            }
+
+            const authEmail = String(
+                sessionData.session.user.email ||
+                loggedInUser.email ||
+                ""
+            ).trim().toLowerCase();
+
+            /*
+               IMPORTANT:
+               Never call .from("users") here.
+               lookup_login_account() is the same secure lookup RPC used by
+               the login page and avoids the public.users REST 401 problem.
+            */
+            const { data, error } = await supabaseClient.rpc(
+                "lookup_login_account",
+                {
+                    p_identifier: currentUserId
+                }
+            );
+
+            if (error) {
+                console.error("lookup_login_account dashboard error:", error);
+
+                /* Retry once by authenticated email if available. */
+                if (authEmail) {
+                    const retry = await supabaseClient.rpc(
+                        "lookup_login_account",
+                        {
+                            p_identifier: authEmail
+                        }
+                    );
+
+                    if (!retry.error && retry.data) {
+                        return processDashboardAccountStatus(
+                            retry.data,
+                            currentUserId,
+                            authEmail
+                        );
+                    }
+                }
+
+                return false;
+            }
+
+            return processDashboardAccountStatus(
+                data,
+                currentUserId,
+                authEmail
+            );
+        } catch (error) {
+            console.error("Unable to check account status:", error);
+            return false;
+        }
+    }
+
+    function processDashboardAccountStatus(data, currentUserId, authEmail) {
+        const row = Array.isArray(data) ? (data[0] || null) : data;
+
+        if (!row) {
+            console.error("Account status check returned no account.");
+            return false;
+        }
+
+        const returnedUserId = normalizeUserId(
+            row.userId ??
+            row.user_id ??
+            row.userid ??
+            row.id ??
+            ""
+        );
+
+        const returnedEmail = String(
+            row.authEmail ??
+            row.auth_email ??
+            row.email ??
+            ""
+        ).trim().toLowerCase();
+
+        if (returnedUserId && returnedUserId !== currentUserId) {
+            console.error("Dashboard account identity mismatch.");
+            return false;
+        }
+
+        if (
+            authEmail &&
+            returnedEmail &&
+            authEmail !== returnedEmail
+        ) {
+            console.error("Dashboard Auth email/account email mismatch.");
+            return false;
+        }
+
+        const status = normalizeAccountStatus(
+            row.status ??
+            row.accountStatus ??
+            row.account_status ??
+            row.userStatus ??
+            row.user_status ??
+            row.state ??
+            ""
+        );
+
+        const restrictedMessage = getRestrictedAccountMessage(status);
+
+        if (restrictedMessage) {
+            showAccountRestrictionPopup(status);
+            return false;
         }
 
         /*
-          IMPORTANT:
-          Fetch the real row shape once. This avoids probing invalid columns
-          such as user_id/userid/status/account_status and producing 400s.
+           An empty status is not treated as a restriction. The RPC has
+           already resolved the exact account. This preserves compatibility
+           with older SafePass rows where status may be empty/null.
         */
-        try {
-            const result = await supabaseClient
-                .from(ACCOUNT_STATUS_TABLE)
-                .select("*")
-                .limit(1);
+        accountStatusVerified = true;
+        hideAccountStatusCheckingOverlay();
 
-            if (result.error || !Array.isArray(result.data) || result.data.length === 0) {
-                return null;
-            }
-
-            const sampleRow = result.data[0];
-            const keys = Object.keys(sampleRow);
-
-            const idColumn =
-                ACCOUNT_STATUS_ID_COLUMN_PREFERENCES.find(
-                    key => keys.includes(key)
-                ) || "";
-
-            const statusColumn =
-                ACCOUNT_STATUS_COLUMN_PREFERENCES.find(
-                    key => keys.includes(key)
-                ) || "";
-
-            if (!idColumn) {
-                return null;
-            }
-
-            /*
-              If the schema has no status field, the existing SafePass admin
-              code treats a missing status as active. Do not issue invalid
-              requests just to guess another column.
-            */
-            return {
-                tableName: ACCOUNT_STATUS_TABLE,
-                idColumn,
-                statusColumn
-            };
-        } catch (_) {
-            return null;
-        }
-    }
-
-    async function readCurrentAccountStatus() {
-        if (!supabaseClient || accountRestrictionHandled) {
-            return "";
+        if (!accountRestrictionHandled) {
+            initDashboardRealtime();
+            loadVaultRecords();
         }
 
-        const currentUserId =
-            getCurrentUserId();
-
-        if (!currentUserId) {
-            return "";
-        }
-
-        if (!accountStatusConfig) {
-            accountStatusConfig =
-                await findAccountStatusConfig();
-
-            if (accountStatusConfig) {
-                initAccountStatusRealtime();
-            }
-        }
-
-        if (!accountStatusConfig) {
-            return "";
-        }
-
-        try {
-            /*
-              If no status column exists in this SafePass schema, the users
-              table itself is still the authoritative user list and the admin
-              UI defaults missing status to active. Avoid an invalid REST query.
-            */
-            if (!accountStatusConfig.statusColumn) {
-                const rowResult = await supabaseClient
-                    .from(accountStatusConfig.tableName)
-                    .select("*")
-                    .eq(
-                        accountStatusConfig.idColumn,
-                        currentUserId
-                    )
-                    .limit(1);
-
-                if (rowResult.error || !Array.isArray(rowResult.data) || !rowResult.data.length) {
-                    return "";
-                }
-
-                hideAccountStatusCheckingOverlay();
-
-                if (!accountStatusChannel) {
-                    initAccountStatusRealtime();
-                }
-
-                initDashboardRealtime();
-                loadVaultRecords();
-                return "active";
-            }
-
-            const result =
-                await supabaseClient
-                    .from(
-                        accountStatusConfig.tableName
-                    )
-                    .select(
-                        accountStatusConfig.statusColumn
-                    )
-                    .eq(
-                        accountStatusConfig.idColumn,
-                        currentUserId
-                    )
-                    .limit(1);
-
-            if (result.error) {
-                return "";
-            }
-
-            const row =
-                Array.isArray(result.data) &&
-                result.data.length > 0
-                    ? result.data[0]
-                    : null;
-
-            if (!row) {
-                return "";
-            }
-
-            const status =
-                normalizeAccountStatus(
-                    row[
-                        accountStatusConfig
-                            .statusColumn
-                    ]
-                );
-
-            const restrictedMessage =
-                getRestrictedAccountMessage(
-                    status
-                );
-
-            if (restrictedMessage) {
-                showAccountRestrictionPopup(status);
-            } else if (!accountRestrictionHandled) {
-                // Only allow dashboard interaction after a real user row and
-                // status field have been read successfully from Supabase.
-                hideAccountStatusCheckingOverlay();
-                initDashboardRealtime();
-                loadVaultRecords();
-            }
-
-            return status;
-        } catch (_) {
-            return "";
-        }
-    }
-
-    function initAccountStatusRealtime() {
-        if (
-            !supabaseClient ||
-            !accountStatusConfig ||
-            accountStatusChannel ||
-            accountRestrictionHandled
-        ) {
-            return;
-        }
-
-        const currentUserId =
-            getCurrentUserId();
-
-        if (!currentUserId) {
-            return;
-        }
-
-        accountStatusChannel =
-            supabaseClient
-                .channel(
-                    "dashboard-account-status-" +
-                    currentUserId
-                )
-                .on(
-                    "postgres_changes",
-                    {
-                        event: "UPDATE",
-                        schema: "public",
-                        table:
-                            accountStatusConfig
-                                .tableName,
-                        filter:
-                            accountStatusConfig
-                                .idColumn +
-                            "=eq." +
-                            currentUserId
-                    },
-                    payload => {
-                        const newRow =
-                            payload &&
-                            payload.new
-                                ? payload.new
-                                : {};
-
-                        const status =
-                            normalizeAccountStatus(
-                                newRow[
-                                    accountStatusConfig
-                                        .statusColumn
-                                ]
-                            );
-
-                        if (
-                            getRestrictedAccountMessage(
-                                status
-                            )
-                        ) {
-                            showAccountRestrictionPopup(
-                                status
-                            );
-                        }
-                    }
-                )
-                .subscribe(
-                    () => {
-                        /* Realtime status is intentionally silent in production UI. */
-                    }
-                );
+        return true;
     }
 
     async function initAccountStatusGuard() {
@@ -708,90 +592,100 @@ document.addEventListener("DOMContentLoaded", () => {
             console.error(
                 "Account status verification unavailable: Supabase client is not loaded."
             );
-            // Keep the blocking overlay visible; status cannot be verified.
             return;
         }
 
-        /*
-          Check the database immediately during dashboard startup. The
-          dashboard remains covered and keyboard/click actions are blocked
-          until this first check finishes. A restricted status replaces the
-          checking overlay with the warning popup and clears the login session.
-        */
         accountStatusCheckInProgress = true;
+
         try {
-            await readCurrentAccountStatus();
+            const verified = await readCurrentAccountStatus();
+
+            if (!verified && !accountRestrictionHandled) {
+                /*
+                   Do not leave the user permanently trapped on
+                   "Checking account status...". A failed verification is
+                   retried below; after repeated failures we show a clear
+                   message and return to login instead of hanging forever.
+                */
+                window.setTimeout(() => {
+                    if (!accountStatusVerified && !accountRestrictionHandled) {
+                        const overlay = document.getElementById(
+                            "safePassAccountStatusCheckingOverlay"
+                        );
+
+                        if (overlay) {
+                            const message = overlay.querySelector("p");
+                            if (message) {
+                                message.textContent =
+                                    "Unable to verify your account. Retrying...";
+                            }
+                        }
+                    }
+                }, 8000);
+            }
         } finally {
             accountStatusCheckInProgress = false;
         }
 
-        /*
-          The overlay is removed only inside readCurrentAccountStatus after a
-          valid user row is fetched and its status is confirmed unrestricted.
-          If schema/network verification fails, the dashboard stays blocked.
+        accountStatusPollTimer = window.setInterval(async () => {
+            if (
+                accountRestrictionHandled ||
+                accountStatusCheckInProgress ||
+                accountStatusVerified
+            ) {
+                return;
+            }
 
-          Polling fallback makes the feature work even when the users table
-          has not been added to the Supabase Realtime publication.
-        */
-        accountStatusPollTimer =
-            window.setInterval(
-                async () => {
-                    if (
-                        accountRestrictionHandled ||
-                        accountStatusCheckInProgress
-                    ) {
-                        return;
-                    }
+            accountStatusCheckInProgress = true;
 
-                    accountStatusCheckInProgress =
-                        true;
-
-                    try {
-                        await readCurrentAccountStatus();
-                    } finally {
-                        accountStatusCheckInProgress =
-                            false;
-                    }
-                },
-                ACCOUNT_STATUS_POLL_MS
-            );
+            try {
+                await readCurrentAccountStatus();
+            } finally {
+                accountStatusCheckInProgress = false;
+            }
+        }, ACCOUNT_STATUS_POLL_MS);
     }
 
-    if (
+    /*
+       Reuse the exact same Supabase client/session configuration used by
+       login script.js whenever possible. This is important because login.js
+       uses the custom storage key `safepass-vault-auth`.
+    */
+    if (window.SafePassSupabaseClient) {
+        supabaseClient = window.SafePassSupabaseClient;
+    } else if (
         window.supabase &&
         typeof window.supabase.createClient === "function"
     ) {
-        /*
-          Reuse a page-level SafePass client when another SafePass script has
-          already initialized one. This prevents multiple GoTrueClient
-          instances from sharing the same auth storage key.
-        */
-        if (
-            window.__safePassSupabaseClient &&
-            typeof window.__safePassSupabaseClient.from === "function"
-        ) {
-            supabaseClient =
-                window.__safePassSupabaseClient;
-        } else {
-            supabaseClient =
-                window.supabase.createClient(
-                    SUPABASE_URL,
-                    SUPABASE_ANON_KEY,
-                    {
-                        realtime: {
-                            params: {
-                                eventsPerSecond: 10
-                            }
-                        }
+        supabaseClient = window.supabase.createClient(
+            SUPABASE_URL,
+            SUPABASE_ANON_KEY,
+            {
+                auth: {
+                    persistSession: true,
+                    autoRefreshToken: true,
+                    detectSessionInUrl: true,
+                    storage: window.localStorage,
+                    storageKey: "safepass-vault-auth",
+                    flowType: "pkce"
+                },
+                realtime: {
+                    params: {
+                        eventsPerSecond: 10
                     }
-                );
+                },
+                global: {
+                    headers: {
+                        "x-client-info": "safepass-vault-web-mobile"
+                    }
+                }
+            }
+        );
 
-            window.__safePassSupabaseClient =
-                supabaseClient;
-        }
+        window.SafePassSupabaseClient = supabaseClient;
+    } else {
+        console.error("Supabase JS library was not loaded.");
     }
-
-
     /* ======================================================================
        2. LOGIN SESSION
        ====================================================================== */
@@ -3656,8 +3550,12 @@ document.addEventListener("DOMContentLoaded", () => {
                     }
                 )
                 .subscribe(
-                    () => {
-                        /* Keep realtime connection details out of the console. */
+                    status => {
+
+                        console.log(
+                            "Vault realtime status:",
+                            status
+                        );
                     }
                 );
     }

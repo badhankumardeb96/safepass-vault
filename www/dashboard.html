@@ -2,7 +2,8 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="theme-color" content="#2563EB">
     <title>Dashboard - SafePass Vault</title>
     <link rel="stylesheet" href="dashboard.css">
     <!-- FontAwesome Icons -->
@@ -69,7 +70,7 @@
                                 <option value="" disabled selected>Select Service First</option>
                             </select>
                             <!-- Platform Quick Link Button -->
-                            <a id="platformQuickLink" href="#" target="_blank" title="Open platform official/login page" class="platform-link-btn" style="display: none; padding: 10px 14px; background: #2563eb; color: #fff; border-radius: 6px; text-decoration: none; align-items: center; gap: 6px; font-size: 14px; white-space: nowrap;">
+                            <a id="platformQuickLink" href="#" target="_blank" rel="noopener noreferrer" title="Open platform official/login page" class="platform-link-btn" style="display: none; padding: 10px 14px; background: #2563eb; color: #fff; border-radius: 6px; text-decoration: none; align-items: center; gap: 6px; font-size: 14px; white-space: nowrap;">
                                 <i class="fa-solid fa-external-link-alt"></i> Visit
                             </a>
                         </div>
@@ -116,7 +117,7 @@
                 <div id="recordsGrid" class="records-grid">
                     <!-- Dynamically generated cards will appear here -->
                 </div>
-                
+
                 <div id="noDataMessage" class="no-data-msg" style="display: none;">
                     <i class="fa-solid fa-box-open"></i>
                     <p>No matching credential records found.</p>
@@ -156,7 +157,7 @@
     </div>
 
     <!-- Footer Section -->
-    <main-footer class="main-footer"> <!-- Note: kept exact structure -->
+    <main-footer class="main-footer">
         <footer class="main-footer">
             <p>&copy; 2026 <strong>SafePass Vault</strong>. All rights reserved. Secure Cloud Storage System.</p>
         </footer>
