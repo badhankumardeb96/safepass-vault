@@ -23,6 +23,752 @@ document.addEventListener("DOMContentLoaded", () => {
     let supabaseClient = null;
     let dashboardRealtimeSub = null;
 
+    /*
+      ======================================================================
+      ACCOUNT STATUS GUARD
+      ======================================================================
+      The admin/user-management page can change a user's account status to
+      Active, Suspended, Blocked, or Disabled. This dashboard checks the
+      server-side user record and also listens for realtime changes.
+
+      IMPORTANT:
+      - The exact user table/column names can vary between SafePass builds.
+      - The code therefore discovers a compatible user table + userid/status
+        columns instead of hard-coding only one schema.
+      - Realtime is used when available; polling remains as a fallback.
+    */
+
+    const ACCOUNT_STATUS_TABLE_CANDIDATES = [
+        "users",
+        "user_profiles",
+        "profiles",
+        "accounts"
+    ];
+
+    const ACCOUNT_STATUS_ID_COLUMN_CANDIDATES = [
+        "userid",
+        "user_id",
+        "userId",
+        "id"
+    ];
+
+    const ACCOUNT_STATUS_COLUMN_CANDIDATES = [
+        "status",
+        "account_status",
+        "accountstatus",
+        "user_status",
+        "state"
+    ];
+
+    // Check quickly after login and keep checking once per second as fallback.
+    const ACCOUNT_STATUS_POLL_MS = 1000;
+
+    let accountStatusConfig = null;
+    let accountStatusChannel = null;
+    let accountStatusPollTimer = null;
+    let accountStatusCheckInProgress = false;
+    let accountRestrictionHandled = false;
+    let accountStatusGateActive = false;
+    let dashboardInitializedAfterStatus = false;
+
+    /*
+      Lock the dashboard while the server account status is checked.
+      This prevents a restricted user from briefly using dashboard controls
+      after login while the status request is in flight.
+    */
+    function showAccountStatusCheckingOverlay() {
+        if (document.getElementById("safePassAccountStatusCheckingOverlay")) {
+            accountStatusGateActive = true;
+            return;
+        }
+
+        accountStatusGateActive = true;
+
+        const overlay = document.createElement("div");
+        overlay.id = "safePassAccountStatusCheckingOverlay";
+        overlay.setAttribute("role", "status");
+        overlay.setAttribute("aria-live", "polite");
+        overlay.innerHTML = `
+            <div class="safe-pass-status-checking-card">
+                <div class="safe-pass-status-checking-spinner" aria-hidden="true"></div>
+                <strong>Checking account status...</strong>
+                <p>Please wait a moment.</p>
+            </div>
+        `;
+
+        const style = document.createElement("style");
+        style.id = "safePassAccountStatusCheckingStyles";
+        style.textContent = `
+            #safePassAccountStatusCheckingOverlay {
+                position: fixed;
+                inset: 0;
+                z-index: 2147483646;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 24px;
+                box-sizing: border-box;
+                background: rgba(10, 18, 30, 0.88);
+                color: #243746;
+                font-family: Arial, Helvetica, sans-serif;
+            }
+            #safePassAccountStatusCheckingOverlay .safe-pass-status-checking-card {
+                width: min(360px, 100%);
+                padding: 28px 24px;
+                border-radius: 14px;
+                background: #fff;
+                text-align: center;
+                box-shadow: 0 18px 48px rgba(0,0,0,.28);
+            }
+            #safePassAccountStatusCheckingOverlay strong { display: block; font-size: 17px; }
+            #safePassAccountStatusCheckingOverlay p { margin: 9px 0 0; color: #65727d; font-size: 14px; }
+            #safePassAccountStatusCheckingOverlay .safe-pass-status-checking-spinner {
+                width: 34px;
+                height: 34px;
+                margin: 0 auto 16px;
+                border: 4px solid #dce6ec;
+                border-top-color: #177a9b;
+                border-radius: 50%;
+                animation: safePassStatusSpin .8s linear infinite;
+            }
+            @keyframes safePassStatusSpin { to { transform: rotate(360deg); } }
+        `;
+
+        document.head.appendChild(style);
+        document.body.appendChild(overlay);
+    }
+
+    function hideAccountStatusCheckingOverlay() {
+        const overlay = document.getElementById("safePassAccountStatusCheckingOverlay");
+        const style = document.getElementById("safePassAccountStatusCheckingStyles");
+        if (overlay) overlay.remove();
+        if (style) style.remove();
+        accountStatusGateActive = false;
+    }
+
+    // Block keyboard/click/form actions until status verification finishes,
+    // and keep all interactions blocked after an account restriction is found.
+    ["click", "submit", "keydown", "keypress", "keyup"].forEach(eventName => {
+        document.addEventListener(eventName, event => {
+            if (accountStatusGateActive || accountRestrictionHandled) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (typeof event.stopImmediatePropagation === "function") {
+                    event.stopImmediatePropagation();
+                }
+            }
+        }, true);
+    });
+
+    function normalizeAccountStatus(value) {
+        if (value === null || value === undefined) {
+            return "";
+        }
+
+        return String(value)
+            .trim()
+            .toLowerCase()
+            .replace(/[-_]+/g, " ")
+            .replace(/\s+/g, " ");
+    }
+
+    function getRestrictedAccountMessage(status) {
+        const normalized = normalizeAccountStatus(status);
+
+        if (normalized === "suspended") {
+            return "Your account is suspended.";
+        }
+
+        if (normalized === "blocked") {
+            return "Your account is blocked.";
+        }
+
+        if (
+            normalized === "disabled" ||
+            normalized === "disable"
+        ) {
+            return "Your account is disabled.";
+        }
+
+        return "";
+    }
+
+    function clearLoginSessionForRestriction() {
+        if (dashboardRealtimeSub && supabaseClient) {
+            try {
+                supabaseClient.removeChannel(
+                    dashboardRealtimeSub
+                );
+            } catch (error) {
+                console.warn(
+                    "Unable to remove dashboard realtime channel:",
+                    error
+                );
+            }
+
+            dashboardRealtimeSub = null;
+        }
+
+        if (accountStatusChannel && supabaseClient) {
+            try {
+                supabaseClient.removeChannel(
+                    accountStatusChannel
+                );
+            } catch (error) {
+                console.warn(
+                    "Unable to remove account status channel:",
+                    error
+                );
+            }
+
+            accountStatusChannel = null;
+        }
+
+        if (accountStatusPollTimer) {
+            clearInterval(accountStatusPollTimer);
+            accountStatusPollTimer = null;
+        }
+
+        localStorage.removeItem("safePassUser");
+        localStorage.removeItem("user");
+        localStorage.removeItem("isLoggedIn");
+        localStorage.removeItem("activeTab");
+
+        /*
+          IMPORTANT: Never delete vault data when an account is logged out
+          or force-logged-out because of account status. Vault records are
+          user data, not login-session data. The records remain in Supabase
+          and the local cache remains available for the same user after the
+          next login. The user can delete individual records from the vault
+          UI when they choose to do so.
+        */
+    }
+
+    function showAccountRestrictionPopup(status) {
+        const message = getRestrictedAccountMessage(status);
+
+        if (!message || accountRestrictionHandled) {
+            return;
+        }
+
+        accountRestrictionHandled = true;
+
+        /*
+          Stop normal dashboard activity immediately. The popup is shown
+          before redirecting so the user can clearly see why the session
+          was terminated.
+        */
+        clearLoginSessionForRestriction();
+        hideAccountStatusCheckingOverlay();
+
+        const existingPopup =
+            document.getElementById(
+                "safePassAccountRestrictionOverlay"
+            );
+
+        if (existingPopup) {
+            return;
+        }
+
+        const overlay =
+            document.createElement("div");
+
+        overlay.id =
+            "safePassAccountRestrictionOverlay";
+
+        overlay.innerHTML = `
+            <div
+                class="safe-pass-account-alert"
+                role="alertdialog"
+                aria-modal="true"
+                aria-labelledby="safePassAccountAlertTitle"
+                aria-describedby="safePassAccountAlertMessage"
+            >
+                <div class="safe-pass-warning-icon" aria-hidden="true">
+                    &#9888;
+                </div>
+
+                <h2 id="safePassAccountAlertTitle">
+                    Account Access Restricted
+                </h2>
+
+                <p
+                    id="safePassAccountAlertMessage"
+                    class="safe-pass-account-alert-message"
+                >
+                    ${escapeHTML(message)}
+                </p>
+
+                <p class="safe-pass-account-alert-contact">
+                    Please contact SafePass Vault Admin.
+                </p>
+
+                <p class="safe-pass-account-alert-countdown" aria-live="polite">
+                    Redirecting to the login page in
+                    <strong id="safePassAccountAlertCountdown">10</strong>
+                    seconds...
+                </p>
+            </div>
+        `;
+
+        const style =
+            document.createElement("style");
+
+        style.id =
+            "safePassAccountRestrictionStyles";
+
+        style.textContent = `
+            #safePassAccountRestrictionOverlay {
+                position: fixed;
+                inset: 0;
+                z-index: 2147483647;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                padding: 24px;
+                box-sizing: border-box;
+                background: rgba(10, 18, 30, 0.72);
+                backdrop-filter: blur(4px);
+                -webkit-backdrop-filter: blur(4px);
+            }
+
+            #safePassAccountRestrictionOverlay
+            .safe-pass-account-alert {
+                width: min(460px, 100%);
+                box-sizing: border-box;
+                padding: 30px 28px 28px;
+                border-radius: 16px;
+                background: #ffffff;
+                border: 1px solid #e1e7ec;
+                box-shadow:
+                    0 22px 60px rgba(0, 0, 0, 0.28);
+                text-align: center;
+                font-family:
+                    Arial,
+                    Helvetica,
+                    sans-serif;
+                animation:
+                    safePassAlertIn
+                    0.18s
+                    ease-out;
+            }
+
+            #safePassAccountRestrictionOverlay
+            .safe-pass-warning-icon {
+                width: 68px;
+                height: 68px;
+                margin: 0 auto 16px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border-radius: 50%;
+                background: #fff4d6;
+                color: #e59b00;
+                border: 2px solid #f0c45c;
+                font-size: 36px;
+                font-weight: 700;
+                line-height: 1;
+            }
+
+            #safePassAccountRestrictionOverlay
+            h2 {
+                margin: 0 0 12px;
+                color: #244b5d;
+                font-size: 21px;
+                font-weight: 700;
+            }
+
+            #safePassAccountRestrictionOverlay
+            .safe-pass-account-alert-message {
+                margin: 0 0 10px;
+                color: #d64545;
+                font-size: 17px;
+                font-weight: 700;
+                line-height: 1.5;
+            }
+
+            #safePassAccountRestrictionOverlay
+            .safe-pass-account-alert-contact {
+                margin: 0;
+                color: #5f6b75;
+                font-size: 14px;
+                line-height: 1.5;
+            }
+
+            #safePassAccountRestrictionOverlay
+            .safe-pass-account-alert-countdown {
+                margin: 18px 0 0;
+                padding-top: 14px;
+                border-top: 1px solid #edf0f3;
+                color: #6b7680;
+                font-size: 13px;
+                line-height: 1.5;
+            }
+
+            #safePassAccountRestrictionOverlay
+            .safe-pass-account-alert-countdown strong {
+                display: inline-flex;
+                min-width: 26px;
+                justify-content: center;
+                color: #d64545;
+                font-size: 16px;
+                font-weight: 700;
+            }
+
+            @keyframes safePassAlertIn {
+                from {
+                    opacity: 0;
+                    transform: translateY(8px) scale(0.98);
+                }
+
+                to {
+                    opacity: 1;
+                    transform: translateY(0) scale(1);
+                }
+            }
+        `;
+
+        document.head.appendChild(style);
+        document.body.appendChild(overlay);
+
+        /*
+          Keep the warning visible for a full 10 seconds so the user has
+          enough time to read it. The countdown updates once per second.
+          The session/local cache was already cleared above.
+        */
+        const countdownElement =
+            document.getElementById(
+                "safePassAccountAlertCountdown"
+            );
+
+        let secondsRemaining = 10;
+
+        const countdownTimer =
+            window.setInterval(() => {
+                secondsRemaining -= 1;
+
+                if (countdownElement) {
+                    countdownElement.textContent =
+                        String(Math.max(secondsRemaining, 0));
+                }
+
+                if (secondsRemaining <= 0) {
+                    window.clearInterval(countdownTimer);
+                    window.location.replace("index.html");
+                }
+            }, 1000);
+    }
+
+    async function findAccountStatusConfig() {
+        if (!supabaseClient) {
+            return null;
+        }
+
+        const currentUserId =
+            normalizeUserId(
+                loggedInUser.userId ??
+                loggedInUser.userid ??
+                loggedInUser.user_id ??
+                loggedInUser.id ??
+                ""
+            );
+
+        if (!currentUserId) {
+            return null;
+        }
+
+        for (
+            const tableName
+            of ACCOUNT_STATUS_TABLE_CANDIDATES
+        ) {
+            for (
+                const idColumn
+                of ACCOUNT_STATUS_ID_COLUMN_CANDIDATES
+            ) {
+                for (
+                    const statusColumn
+                    of ACCOUNT_STATUS_COLUMN_CANDIDATES
+                ) {
+                    try {
+                        const result =
+                            await supabaseClient
+                                .from(tableName)
+                                .select(statusColumn)
+                                .eq(
+                                    idColumn,
+                                    currentUserId
+                                )
+                                .limit(1);
+
+                        if (
+                            !result.error &&
+                            Array.isArray(result.data) &&
+                            result.data.length > 0
+                        ) {
+                            // Require a matching row, not merely a valid
+                            // table/column combination. This avoids choosing
+                            // a UUID primary-key column when the app's 10-digit
+                            // user ID is stored in a separate userid column.
+                            return {
+                                tableName,
+                                idColumn,
+                                statusColumn
+                            };
+                        }
+                    } catch (error) {
+                        /*
+                          A failed combination normally means that this
+                          table/column combination does not exist or is not
+                          readable. Continue discovering the real schema.
+                        */
+                    }
+                }
+            }
+        }
+
+        return null;
+    }
+
+    async function readCurrentAccountStatus() {
+        if (!supabaseClient || accountRestrictionHandled) {
+            return "";
+        }
+
+        const currentUserId =
+            getCurrentUserId();
+
+        if (!currentUserId) {
+            return "";
+        }
+
+        if (!accountStatusConfig) {
+            accountStatusConfig =
+                await findAccountStatusConfig();
+
+            if (accountStatusConfig) {
+                initAccountStatusRealtime();
+            }
+        }
+
+        if (!accountStatusConfig) {
+            return "";
+        }
+
+        try {
+            const result =
+                await supabaseClient
+                    .from(
+                        accountStatusConfig.tableName
+                    )
+                    .select(
+                        accountStatusConfig.statusColumn
+                    )
+                    .eq(
+                        accountStatusConfig.idColumn,
+                        currentUserId
+                    )
+                    .limit(1);
+
+            if (result.error) {
+                console.error(
+                    "Account status query error:",
+                    result.error
+                );
+
+                return "";
+            }
+
+            const row =
+                Array.isArray(result.data) &&
+                result.data.length > 0
+                    ? result.data[0]
+                    : null;
+
+            if (!row) {
+                return "";
+            }
+
+            const status =
+                normalizeAccountStatus(
+                    row[
+                        accountStatusConfig
+                            .statusColumn
+                    ]
+                );
+
+            const restrictedMessage =
+                getRestrictedAccountMessage(
+                    status
+                );
+
+            if (restrictedMessage) {
+                showAccountRestrictionPopup(status);
+            } else if (!accountRestrictionHandled) {
+                // Only allow dashboard interaction after a real user row and
+                // status field have been read successfully from Supabase.
+                hideAccountStatusCheckingOverlay();
+
+                /*
+                  IMPORTANT:
+                  Account-status polling runs every second. Do NOT reload and
+                  re-render the vault on every successful poll. Re-rendering
+                  replaces the password/CVV DOM nodes and makes an already
+                  revealed secret appear hidden before its 10-second timer
+                  finishes. The dashboard is initialized only once here;
+                  realtime vault updates handle later data changes.
+                */
+                if (!dashboardInitializedAfterStatus) {
+                    dashboardInitializedAfterStatus = true;
+                    initDashboardRealtime();
+                    loadVaultRecords();
+                }
+            }
+
+            return status;
+        } catch (error) {
+            console.error(
+                "Unable to check account status:",
+                error
+            );
+
+            return "";
+        }
+    }
+
+    function initAccountStatusRealtime() {
+        if (
+            !supabaseClient ||
+            !accountStatusConfig ||
+            accountStatusChannel ||
+            accountRestrictionHandled
+        ) {
+            return;
+        }
+
+        const currentUserId =
+            getCurrentUserId();
+
+        if (!currentUserId) {
+            return;
+        }
+
+        accountStatusChannel =
+            supabaseClient
+                .channel(
+                    "dashboard-account-status-" +
+                    currentUserId
+                )
+                .on(
+                    "postgres_changes",
+                    {
+                        event: "UPDATE",
+                        schema: "public",
+                        table:
+                            accountStatusConfig
+                                .tableName,
+                        filter:
+                            accountStatusConfig
+                                .idColumn +
+                            "=eq." +
+                            currentUserId
+                    },
+                    payload => {
+                        const newRow =
+                            payload &&
+                            payload.new
+                                ? payload.new
+                                : {};
+
+                        const status =
+                            normalizeAccountStatus(
+                                newRow[
+                                    accountStatusConfig
+                                        .statusColumn
+                                ]
+                            );
+
+                        if (
+                            getRestrictedAccountMessage(
+                                status
+                            )
+                        ) {
+                            showAccountRestrictionPopup(
+                                status
+                            );
+                        }
+                    }
+                )
+                .subscribe(
+                    (status, error) => {
+                        console.log(
+                            "Account status realtime:",
+                            status
+                        );
+
+                        if (error) {
+                            console.error(
+                                "Account status realtime error:",
+                                error
+                            );
+                        }
+                    }
+                );
+    }
+
+    async function initAccountStatusGuard() {
+        if (!supabaseClient) {
+            console.error(
+                "Account status verification unavailable: Supabase client is not loaded."
+            );
+            // Keep the blocking overlay visible; status cannot be verified.
+            return;
+        }
+
+        /*
+          Check the database immediately during dashboard startup. The
+          dashboard remains covered and keyboard/click actions are blocked
+          until this first check finishes. A restricted status replaces the
+          checking overlay with the warning popup and clears the login session.
+        */
+        accountStatusCheckInProgress = true;
+        try {
+            await readCurrentAccountStatus();
+        } finally {
+            accountStatusCheckInProgress = false;
+        }
+
+        /*
+          The overlay is removed only inside readCurrentAccountStatus after a
+          valid user row is fetched and its status is confirmed unrestricted.
+          If schema/network verification fails, the dashboard stays blocked.
+
+          Polling fallback makes the feature work even when the users table
+          has not been added to the Supabase Realtime publication.
+        */
+        accountStatusPollTimer =
+            window.setInterval(
+                async () => {
+                    if (
+                        accountRestrictionHandled ||
+                        accountStatusCheckInProgress
+                    ) {
+                        return;
+                    }
+
+                    accountStatusCheckInProgress =
+                        true;
+
+                    try {
+                        await readCurrentAccountStatus();
+                    } finally {
+                        accountStatusCheckInProgress =
+                            false;
+                    }
+                },
+                ACCOUNT_STATUS_POLL_MS
+            );
+    }
+
     if (
         window.supabase &&
         typeof window.supabase.createClient === "function"
@@ -136,6 +882,10 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
     }
 
+    // Show the blocking gate and begin verification immediately after login.
+    // Dashboard controls stay blocked until Supabase confirms the account status.
+    showAccountStatusCheckingOverlay();
+    initAccountStatusGuard();
 
     function normalizeEmail(value) {
 
@@ -241,10 +991,10 @@ document.addEventListener("DOMContentLoaded", () => {
             localStorage.removeItem("activeTab");
 
             /*
-              Remove only current user's local records.
-              This prevents old user's cache from being reused.
+              IMPORTANT: Logout only clears the login/session state.
+              NEVER remove "vault_records" here. Vault data belongs to the
+              user and must remain available after the next login.
             */
-            localStorage.removeItem("vault_records");
 
             window.location.href = "index.html";
         });
@@ -1842,6 +2592,13 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     userid: currentUserId,
 
+                    // Permanent Auth ownership link. Legacy userid remains
+                    // untouched so all existing vault records keep working.
+                    owner_id:
+                        loggedInUser.auth_user_id ||
+                        loggedInUser.owner_id ||
+                        null,
+
                     userfullname:
                         getCurrentUserName(),
 
@@ -1895,11 +2652,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
                 let cloudSaved = false;
+                let cloudSaveError = null;
+                let savedCloudRecord = null;
 
 
                 /* ==========================================================
                    SUPABASE SAVE
-                   ========================================================== */
+                   ==========================================================
+                   The credentials table may use either a text id supplied by
+                   the dashboard or a numeric/UUID auto-generated id. Try the
+                   normal record first. If the database rejects the custom id
+                   because of its type/default, retry without id so Supabase
+                   can generate it.
+                */
 
                 try {
 
@@ -1928,19 +2693,49 @@ document.addEventListener("DOMContentLoaded", () => {
                             throw error;
                         }
 
+                        savedCloudRecord = payloadData;
+
                     } else {
 
-                        const {
-                            error
-                        } = await supabaseClient
+                        /* First attempt: keep the existing SafePass record id. */
+                        const firstInsert = await supabaseClient
                             .from("credentials")
-                            .insert([
-                                payloadData
-                            ]);
+                            .insert([payloadData]);
 
 
-                        if (error) {
-                            throw error;
+                        if (!firstInsert.error) {
+
+                            savedCloudRecord = payloadData;
+
+                        } else {
+
+                            /*
+                              Some credentials tables define id as bigint, uuid,
+                              identity, or another generated type. In that case
+                              a value such as "rec-..." is rejected. Retry with
+                              the id removed and let the database generate it.
+                            */
+                            const retryPayload = { ...payloadData };
+                            delete retryPayload.id;
+
+                            const secondInsert = await supabaseClient
+                                .from("credentials")
+                                .insert([retryPayload])
+                                .select()
+                                .maybeSingle();
+
+
+                            if (secondInsert.error) {
+                                throw new Error(
+                                    (firstInsert.error?.message || "Initial insert failed.") +
+                                    " | Retry without record id failed: " +
+                                    (secondInsert.error?.message || "Unknown database error.")
+                                );
+                            }
+
+                            savedCloudRecord =
+                                secondInsert.data ||
+                                retryPayload;
                         }
                     }
 
@@ -1948,6 +2743,8 @@ document.addEventListener("DOMContentLoaded", () => {
                     cloudSaved = true;
 
                 } catch (error) {
+
+                    cloudSaveError = error;
 
                     console.error(
                         "Supabase save error:",
@@ -1982,6 +2779,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     localRecords = [];
                 }
+
+
+                const localRecordToStore =
+                    savedCloudRecord ||
+                    payloadData;
 
 
                 if (editId) {
@@ -2021,7 +2823,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
                                     found = true;
 
-                                    return payloadData;
+                                    return localRecordToStore;
                                 }
 
 
@@ -2032,14 +2834,14 @@ document.addEventListener("DOMContentLoaded", () => {
 
                     if (!found) {
                         localRecords.push(
-                            payloadData
+                            localRecordToStore
                         );
                     }
 
                 } else {
 
                     localRecords.push(
-                        payloadData
+                        localRecordToStore
                     );
                 }
 
@@ -2064,10 +2866,25 @@ document.addEventListener("DOMContentLoaded", () => {
 
                 } else {
 
+                    const rawCloudError =
+                        cloudSaveError?.message ||
+                        cloudSaveError?.details ||
+                        cloudSaveError?.hint ||
+                        "Unknown Supabase error.";
+
+                    const readableCloudError =
+                        String(rawCloudError)
+                            .replace(/\s+/g, " ")
+                            .trim()
+                            .slice(0, 500);
+
                     alert(
-                        editId
-                            ? "Cloud update failed. The updated record was kept in this browser."
-                            : "Cloud save failed. The record was kept in this browser."
+                        (editId
+                            ? "Cloud update failed. "
+                            : "Cloud save failed. ") +
+                        "The record was kept in this browser.\n\n" +
+                        "Database message: " +
+                        readableCloudError
                     );
                 }
 
@@ -2319,6 +3136,12 @@ document.addEventListener("DOMContentLoaded", () => {
        ====================================================================== */
 
     async function loadVaultRecords() {
+
+        // Never fetch/render vault records while account verification is
+        // pending or after a restricted account has been detected.
+        if (accountStatusGateActive || accountRestrictionHandled) {
+            return;
+        }
 
         const currentUserId =
             getCurrentUserId();
@@ -2848,9 +3671,6 @@ document.addEventListener("DOMContentLoaded", () => {
     }
 
 
-    initDashboardRealtime();
-
-
     /* ======================================================================
        22. CROSS TAB SYNC
        ====================================================================== */
@@ -3288,6 +4108,8 @@ document.addEventListener("DOMContentLoaded", () => {
                                         data-secret="${escapeHTML(
                                             realCvv
                                         )}"
+                                        data-hidden-value="•••"
+                                        data-visible="false"
                                     >
                                         •••
                                     </span>
@@ -3326,6 +4148,8 @@ document.addEventListener("DOMContentLoaded", () => {
                                         data-secret="${escapeHTML(
                                             realPassword
                                         )}"
+                                        data-hidden-value="••••••••"
+                                        data-visible="false"
                                     >
                                         ••••••••
                                     </span>
@@ -3402,127 +4226,196 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
         /* ==================================================================
-           PASSWORD / CVV SHOW-HIDE
-           ================================================================== */
+           CARD / CONTROL INTERACTION STABILITY
+           ==================================================================
+           Eye/action controls must not trigger the parent card interaction.
+           No hover, mouse-leave, pointer-leave, blur, or focus handler is
+           allowed to change password/CVV visibility.
+        ================================================================== */
 
         document
             .querySelectorAll(
-                ".eye-toggle-btn"
+                ".record-card .eye-toggle-btn, .record-card .action-btn"
             )
+            .forEach(control => {
+
+                [
+                    "pointerdown",
+                    "mousedown",
+                    "touchstart"
+                ].forEach(eventName => {
+                    control.addEventListener(
+                        eventName,
+                        event => {
+                            event.stopPropagation();
+                        }
+                    );
+                });
+            });
+
+
+        /* ==================================================================
+           PASSWORD / CVV SHOW-HIDE
+           ==================================================================
+           Rules:
+           - Eye click is the ONLY action that changes visibility.
+           - First click shows the real value.
+           - Second click hides it immediately.
+           - After SHOW, auto-hide happens exactly 10 seconds later.
+           - Mouse movement, hover, leaving the card, focus changes, and
+             pointer movement never hide the value.
+           - Every SHOW click starts a fresh timer and every HIDE click
+             cancels the old timer.
+        ================================================================== */
+
+        document
+            .querySelectorAll(".eye-toggle-btn")
             .forEach(button => {
 
                 button.addEventListener(
                     "click",
-                    function () {
+                    function (event) {
+
+                        event.preventDefault();
+                        event.stopPropagation();
 
                         const targetId =
-                            this.getAttribute(
-                                "data-target"
-                            );
+                            this.getAttribute("data-target");
 
+                        if (!targetId) {
+                            return;
+                        }
 
                         const span =
-                            document.getElementById(
-                                targetId
-                            );
-
-
-                        const icon =
-                            this.querySelector(
-                                "i"
-                            );
-
+                            document.getElementById(targetId);
 
                         if (!span) {
                             return;
                         }
 
+                        const icon =
+                            this.querySelector("i");
 
                         const realSecret =
-                            span.getAttribute(
-                                "data-secret"
-                            ) || "";
-
-
-                        if (
-                            activeTimers[
-                                targetId
-                            ]
-                        ) {
-
-                            clearTimeout(
-                                activeTimers[
-                                    targetId
-                                ]
-                            );
-
-                            delete activeTimers[
-                                targetId
-                            ];
-                        }
-
+                            span.getAttribute("data-secret") || "";
 
                         const hiddenValue =
-                            realSecret.length === 3
+                            span.getAttribute("data-hidden-value") ||
+                            (realSecret.length === 3
                                 ? "•••"
-                                : "••••••••";
+                                : "••••••••");
 
+                        const isVisible =
+                            span.dataset.visible === "true";
 
-                        if (
-                            span.textContent.trim() ===
-                            hiddenValue
-                        ) {
+                        /* Cancel only the timer belonging to this field. */
+                        if (activeTimers[targetId]) {
+                            window.clearTimeout(
+                                activeTimers[targetId]
+                            );
+                            delete activeTimers[targetId];
+                        }
 
-                            span.textContent =
-                                realSecret;
+                        if (!isVisible) {
 
+                            /* ===============================
+                               SHOW
+                               =============================== */
+                            span.textContent = realSecret;
+                            span.dataset.visible = "true";
 
-                            icon.classList.remove(
-                                "fa-eye"
+                            if (icon) {
+                                icon.classList.remove("fa-eye");
+                                icon.classList.add("fa-eye-slash");
+                            }
+
+                            this.setAttribute(
+                                "title",
+                                targetId.indexOf("cvv-") === 0
+                                    ? "Hide CVV"
+                                    : "Hide Password"
                             );
 
-                            icon.classList.add(
-                                "fa-eye-slash"
-                            );
+                            /*
+                              Start exactly one 10-second timer from this
+                              click. Mouse movement cannot cancel it.
+                            */
+                            activeTimers[targetId] =
+                                window.setTimeout(() => {
 
+                                    const currentSpan =
+                                        document.getElementById(targetId);
 
-                            activeTimers[
-                                targetId
-                            ] =
-                                setTimeout(
-                                    () => {
+                                    if (!currentSpan) {
+                                        delete activeTimers[targetId];
+                                        return;
+                                    }
 
-                                        span.textContent =
-                                            hiddenValue;
+                                    /*
+                                      A stale timer must never hide a value
+                                      that was manually hidden/revealed later.
+                                    */
+                                    if (
+                                        currentSpan.dataset.visible === "true"
+                                    ) {
+                                        currentSpan.textContent =
+                                            currentSpan.getAttribute(
+                                                "data-hidden-value"
+                                            ) || hiddenValue;
 
-                                        icon.classList.remove(
-                                            "fa-eye-slash"
-                                        );
+                                        currentSpan.dataset.visible = "false";
 
-                                        icon.classList.add(
-                                            "fa-eye"
-                                        );
+                                        const currentButton =
+                                            document.querySelector(
+                                                `.eye-toggle-btn[data-target="${CSS.escape(targetId)}"]`
+                                            );
 
-                                        delete activeTimers[
-                                            targetId
-                                        ];
+                                        const currentIcon =
+                                            currentButton
+                                                ? currentButton.querySelector("i")
+                                                : null;
 
-                                    },
-                                    10000
-                                );
+                                        if (currentIcon) {
+                                            currentIcon.classList.remove(
+                                                "fa-eye-slash"
+                                            );
+                                            currentIcon.classList.add(
+                                                "fa-eye"
+                                            );
+                                        }
+
+                                        if (currentButton) {
+                                            currentButton.setAttribute(
+                                                "title",
+                                                targetId.indexOf("cvv-") === 0
+                                                    ? "Show CVV"
+                                                    : "Show Password"
+                                            );
+                                        }
+                                    }
+
+                                    delete activeTimers[targetId];
+
+                                }, 10000);
 
                         } else {
 
-                            span.textContent =
-                                hiddenValue;
+                            /* ===============================
+                               MANUAL HIDE
+                               =============================== */
+                            span.textContent = hiddenValue;
+                            span.dataset.visible = "false";
 
+                            if (icon) {
+                                icon.classList.remove("fa-eye-slash");
+                                icon.classList.add("fa-eye");
+                            }
 
-                            icon.classList.remove(
-                                "fa-eye-slash"
-                            );
-
-                            icon.classList.add(
-                                "fa-eye"
+                            this.setAttribute(
+                                "title",
+                                targetId.indexOf("cvv-") === 0
+                                    ? "Show CVV"
+                                    : "Show Password"
                             );
                         }
                     }
@@ -4095,7 +4988,9 @@ document.addEventListener("DOMContentLoaded", () => {
        26. INITIAL LOAD
        ====================================================================== */
 
-    loadVaultRecords();
+    // Vault data is loaded only after the server confirms this account is
+    // not suspended, blocked, or disabled. The account-status guard calls
+    // loadVaultRecords() after successful verification.
 
 });
 

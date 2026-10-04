@@ -13,23 +13,32 @@
 
     <!-- Admin Security Guard -->
     <script>
+        // Only perform a lightweight local guard here. The full server/API
+        // checks are handled by admin.js after Supabase is initialized.
         document.addEventListener("DOMContentLoaded", () => {
-            let loggedInUser = null;
+            const isAdminLoggedIn = localStorage.getItem('isAdminLoggedIn') === 'true';
+            const adminUserRaw = localStorage.getItem('adminUser') || localStorage.getItem('userData');
+            let adminUser = null;
+
             try {
-                const userRaw = localStorage.getItem('current_user') || localStorage.getItem('loggedInUser') || localStorage.getItem('user') || localStorage.getItem('userData') || sessionStorage.getItem('current_user');
-                if (userRaw) {
-                    loggedInUser = JSON.parse(userRaw);
-                }
+                if (adminUserRaw) adminUser = JSON.parse(adminUserRaw);
             } catch (e) {
-                console.error("Error parsing user session:", e);
+                console.error('Invalid admin session data:', e);
             }
 
-            const isAdminLoggedIn = localStorage.getItem('isAdminLoggedIn') === 'true';
-            const hasSession = loggedInUser !== null || isAdminLoggedIn;
+            const role = String(
+                adminUser?.role ||
+                adminUser?.userType ||
+                adminUser?.type ||
+                localStorage.getItem('adminRole') || ''
+            ).toLowerCase().trim();
 
-            if (!hasSession) {
-                alert("Access Denied! Please log in first.");
-                window.location.href = "admin-login.html";
+            const isAdminRole = [
+                'admin', 'superadmin', 'super_admin', 'administrator'
+            ].includes(role) || adminUser?.isAdmin === true || adminUser?.is_admin === true;
+
+            if (!isAdminLoggedIn || !isAdminRole) {
+                window.location.replace('admin-login.html');
             }
         });
     </script>
@@ -83,7 +92,7 @@
         <section class="card admin-card toolbar-card">
             <div class="search-box">
                 <i class="fa-solid fa-magnifying-glass search-icon"></i>
-                <input type="text" id="adminSearchInput" placeholder="Search by 10-digit ID, Name, Email or Phone..." onkeyup="filterTableData()">
+                <input type="text" id="adminSearchInput" placeholder="Search by 10-digit ID, Name, Email or Phone..." oninput="filterAndRenderTables()">
             </div>
             <button class="btn-refresh" onclick="fetchData()"><i class="fa-solid fa-rotate"></i> Refresh Data</button>
         </section>

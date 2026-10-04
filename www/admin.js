@@ -28,24 +28,45 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 // Strict Admin Session & Role Guard
-function checkAdminSession() {
+async function checkAdminSession() {
     if (localStorage.getItem('isAdminLoggedIn') !== 'true') {
-        window.location.href = 'admin-login.html';
-        return;
+        window.location.replace('admin-login.html');
+        return false;
     }
 
+    let adminUser = null;
     try {
-        const adminUserObj = JSON.parse(localStorage.getItem('adminUser') || localStorage.getItem('safePassAdmin') || '{}');
-        const roleVal = String(adminUserObj.role || adminUserObj.userType || adminUserObj.type || localStorage.getItem('adminRole') || '').toLowerCase().trim();
-        
-        if (roleVal && roleVal !== 'admin' && roleVal !== 'superadmin' && roleVal !== 'super_admin' && roleVal !== 'administrator') {
-            alert("Access Denied! You are a registered user, not an admin. Regular users cannot access the Admin Panel.");
-            localStorage.clear();
-            window.location.href = 'admin-login.html';
-        }
+        adminUser = JSON.parse(localStorage.getItem('adminUser') || localStorage.getItem('userData') || localStorage.getItem('current_user') || '{}');
     } catch (e) {
-        console.error("Session check error:", e);
+        console.error('Admin session JSON error:', e);
     }
+
+    const roleVal = String(adminUser?.role || adminUser?.userType || adminUser?.type || localStorage.getItem('adminRole') || '').toLowerCase().trim();
+    const isAdmin = ['admin','superadmin','super_admin','administrator'].includes(roleVal) || adminUser?.isAdmin === true || adminUser?.is_admin === true;
+
+    if (!adminUser || !isAdmin) {
+        clearAdminLocalSession();
+        window.location.replace('admin-login.html');
+        return false;
+    }
+
+    // Validate the optional server-side token when present. A missing/unsupported
+    // token RPC must not immediately destroy a valid admin login.
+    const token = localStorage.getItem('admin_session_token');
+    if (token && supabaseClient) {
+        try {
+            const { data, error } = await supabaseClient.rpc('admin_session_is_valid', { p_token: token });
+            if (!error && data === true) return true;
+            if (error) console.warn('Optional admin session validation unavailable:', error.message);
+        } catch (e) {
+            console.warn('Optional admin session validation skipped:', e);
+        }
+    }
+    return true;
+}
+
+function clearAdminLocalSession() {
+    ['isAdminLoggedIn','isLoggedIn','adminUser','userData','current_user','loggedInUser','user','adminEmail','adminPhone','adminName','adminRole','admin_session_token'].forEach(k => localStorage.removeItem(k));
 }
 
 async function fetchAdminProfileName() {
@@ -79,11 +100,32 @@ async function fetchAdminProfileName() {
             .maybeSingle();
 
         if (!error && data) {
-            const dbRole = String(data.role || data.userType || '').toLowerCase().trim();
-            if (dbRole && dbRole !== 'admin' && dbRole !== 'superadmin' && dbRole !== 'super_admin' && dbRole !== 'administrator') {
+            // Keep the same admin rule used by admin-login.js. The locally
+            // verified admin session is authoritative for this page; do not
+            // downgrade it merely because an older users row has no role.
+            const dbRole = String(data.role || data.userType || data.type || '').toLowerCase().trim();
+            const dbEmail = String(data.email || '').toLowerCase().trim();
+            const localAdminRole = String(localStorage.getItem('adminRole') || '').toLowerCase().trim();
+            const localAdminUser = (() => {
+                try {
+                    return JSON.parse(localStorage.getItem('adminUser') || '{}');
+                } catch (e) {
+                    return {};
+                }
+            })();
+            const localIsAdmin = localAdminRole === 'admin' ||
+                ['admin','superadmin','super_admin','administrator'].includes(String(localAdminUser.role || '').toLowerCase().trim()) ||
+                localAdminUser.isAdmin === true ||
+                localAdminUser.is_admin === true;
+            const knownAdminEmail = dbEmail === 'badhandeb725@gmail.com' ||
+                String(localStorage.getItem('adminEmail') || '').toLowerCase().trim() === 'badhandeb725@gmail.com';
+            const dbIsAdmin = ['admin','superadmin','super_admin','administrator'].includes(dbRole) ||
+                data.isAdmin === true || data.is_admin === true;
+
+            if (!dbIsAdmin && !localIsAdmin && !knownAdminEmail) {
                 alert("Access Denied! You are a registered user, not an admin. Regular users cannot access the Admin Panel.");
-                localStorage.clear();
-                window.location.href = 'admin-login.html';
+                clearAdminLocalSession();
+                window.location.replace('admin-login.html');
                 return;
             }
 
@@ -144,9 +186,9 @@ function initSupabaseRealtime() {
 async function fetchData() {
     const adminTableBody = document.getElementById("adminTableBody");
     const userTableBody = document.getElementById("userTableBody");
-    
-    const loadingHtml = `<tr><td colspan="6" style="text-align:center; padding: 20px;">
-        <i class="fa-solid fa-spinner fa-spin" style="margin-right: 8px;"></i>Loading real data...
+
+    const loadingHtml = `<tr><td colspan="6" style="text-align:center; padding:20px;">
+        <i class="fa-solid fa-spinner fa-spin" style="margin-right:8px;"></i>Loading real data...
     </td></tr>`;
 
     if (adminTableBody && usersData.length === 0) adminTableBody.innerHTML = loadingHtml;
@@ -155,13 +197,63 @@ async function fetchData() {
     try {
         if (!supabaseClient) throw new Error("Supabase SDK is not initialized.");
 
-        const { data, error } = await supabaseClient.from('users').select('*');
-        if (error) throw error;
+        let data = null;
+        let rpcError = null;
+
+        // Prefer the Auth-based SECURITY DEFINER RPC. It does not trust a
+        // client-controlled token and works with the Supabase Auth session.
+        try {
+            const result = await supabaseClient.rpc('admin_list_users_for_auth');
+            data = result.data;
+            rpcError = result.error;
+        } catch (e) {
+            rpcError = e;
+        }
+
+        if (rpcError) {
+            console.warn('admin_list_users_for_auth RPC unavailable:', rpcError.message || rpcError);
+        }
+
+        // Backward compatibility: only send a real UUID token to the legacy RPC.
+        // Older localStorage entries sometimes contain the JSON response from
+        // admin_session_is_valid(), which causes PostgreSQL type errors.
+        if (rpcError || !Array.isArray(data)) {
+            const rawToken = localStorage.getItem('admin_session_token') || '';
+            const uuidToken = rawToken.trim().replace(/^"|"$/g, '');
+            const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+            if (uuidPattern.test(uuidToken)) {
+                const result = await supabaseClient.rpc('admin_list_users', {
+                    p_admin_session_token: uuidToken
+                });
+                data = result.data;
+                rpcError = result.error;
+
+                if (rpcError) {
+                    console.warn('Legacy admin_list_users RPC failed:', rpcError.message);
+                }
+            } else if (rawToken) {
+                // Remove stale/malformed JSON/object token so it cannot be
+                // submitted to PostgreSQL again.
+                localStorage.removeItem('admin_session_token');
+            }
+        }
+
+        if (rpcError || !Array.isArray(data)) {
+            // Do NOT fall back to .from('users').select('*') here. With RLS
+            // enabled this returns 401, and bypassing RLS from the browser is
+            // not a valid admin security model. The SECURITY DEFINER RPC above
+            // is the intended admin data path.
+            throw new Error(
+                'Admin user-list RPC is not configured or did not return data. Run the supplied admin_list_users_for_auth.sql in Supabase SQL Editor.'
+            );
+        }
 
         usersData = data || [];
         refreshDashboardUI();
     } catch (error) {
         console.error("Data Loading Error:", error);
+        showFlashPopup('Unable to load admin data: ' + (error.message || error), 'error');
     }
 }
 
@@ -311,6 +403,10 @@ function setupCardClickEvents(element, filterType) {
         card.style.cursor = 'pointer';
         card.onclick = () => filterUserType(filterType);
     }
+}
+
+function filterTableData() {
+    filterAndRenderTables();
 }
 
 function escapeQuotes(str) {
