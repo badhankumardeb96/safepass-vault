@@ -273,23 +273,6 @@ async function fetchAdminProfileName() {
    EVENT LISTENERS
    ========================================================================== */
 
-function initAdminUserNavigationGuard() {
-    if (window.__SAFE_PASS_ADMIN_USER_NAV_GUARD__) return;
-    window.__SAFE_PASS_ADMIN_USER_NAV_GUARD__ = true;
-
-    document.addEventListener("click", (event) => {
-        const link = event.target.closest?.('a[data-safe-pass-admin-user-link="1"]');
-        if (!link) return;
-
-        // Do not let unrelated delegated handlers treat this as an admin logout.
-        // Navigation itself is intentionally left to the browser.
-        if (localStorage.getItem("isAdminLoggedIn") === "true" &&
-            localStorage.getItem("admin_session_token")) {
-            event.stopPropagation();
-        }
-    }, true);
-}
-
 function setupEventListeners() {
     const searchInput = document.getElementById("adminSearchInput");
 
@@ -309,6 +292,25 @@ function setupEventListeners() {
 /* ===========================================================================
    REALTIME
    ========================================================================== */
+
+function initAdminUserNavigationGuard() {
+    if (window.__SAFE_PASS_ADMIN_USER_NAV_GUARD__) return;
+    window.__SAFE_PASS_ADMIN_USER_NAV_GUARD__ = true;
+
+    document.addEventListener("click", (event) => {
+        const link = event.target.closest?.('a[data-safe-pass-admin-user-link="1"]');
+        if (!link) return;
+
+        if (
+            localStorage.getItem("isAdminLoggedIn") === "true" &&
+            getAdminSessionToken()
+        ) {
+            // Stop other document-level handlers from interpreting the link
+            // click as an admin logout. Do not prevent the browser navigation.
+            event.stopPropagation();
+        }
+    }, true);
+}
 
 function initSupabaseRealtime() {
     if (!supabaseClient) return;
@@ -923,12 +925,16 @@ async function saveUserStatusFromModal() {
     try {
         if (!supabaseClient) throw new Error("Supabase Client missing");
 
-        const { error } = await supabaseClient
-            .from('users')
-            .update({ status: newStatus })
-            .or(`"userId".eq.${selectedUserIdForModal},id.eq.${selectedUserIdForModal}`);
+        const token = getAdminSessionToken();
+        if (!token) throw new Error("Admin session expired. Please login again.");
 
-        if (error) throw error;
+        const result = await supabaseClient.rpc("admin_set_user_status", {
+            p_admin_session_token: token,
+            p_user_id: String(selectedUserIdForModal),
+            p_status: String(newStatus).toLowerCase()
+        });
+
+        if (result.error) throw result.error;
 
         showFlashPopup(`Status successfully updated to '${newStatus.toUpperCase()}'!`, 'success');
         closeStatusModal();
@@ -947,7 +953,7 @@ async function makeUserAdmin(userId) {
         if (!supabaseClient) throw new Error("Supabase Client missing");
 
         const token = getAdminSessionToken();
-        if (!isUuid(token)) throw new Error("Admin session expired. Please login again.");
+        if (!token) throw new Error("Admin session expired. Please login again.");
 
         const result = await supabaseClient.rpc("admin_set_user_role", {
             p_admin_session_token: token,
@@ -969,7 +975,7 @@ async function removeAdmin(userId) {
         if (!supabaseClient) throw new Error("Supabase Client missing");
 
         const token = getAdminSessionToken();
-        if (!isUuid(token)) throw new Error("Admin session expired. Please login again.");
+        if (!token) throw new Error("Admin session expired. Please login again.");
 
         const result = await supabaseClient.rpc("admin_set_user_role", {
             p_admin_session_token: token,
@@ -1023,12 +1029,15 @@ async function executePermanentDelete() {
     try {
         if (!supabaseClient) throw new Error("Supabase Client missing");
 
-        const { error } = await supabaseClient
-            .from('users')
-            .delete()
-            .or(`"userId".eq.${selectedUserIdForDelete},id.eq.${selectedUserIdForDelete}`);
+        const token = getAdminSessionToken();
+        if (!token) throw new Error("Admin session expired. Please login again.");
 
-        if (error) throw error;
+        const result = await supabaseClient.rpc("admin_delete_user", {
+            p_admin_session_token: token,
+            p_user_id: String(selectedUserIdForDelete)
+        });
+
+        if (result.error) throw result.error;
 
         showFlashPopup("User account successfully deleted permanently!", 'success');
         closeStatusModal();

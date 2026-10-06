@@ -174,42 +174,42 @@ function getAdminSessionToken() {
 }
 
 function hasLocalAdminSession() {
+    const token = getAdminSessionToken();
+    const loggedIn = localStorage.getItem("isAdminLoggedIn") === "true";
     let role = "";
-    try {
-        const raw = localStorage.getItem("adminUser") ||
-                    localStorage.getItem("userData") ||
-                    "{}";
-        const obj = JSON.parse(raw);
-        role = obj?.role || obj?.userType || obj?.type || "";
-    } catch (_) {}
-    role = String(role || localStorage.getItem("adminRole") || "").toLowerCase().trim();
 
-    return (
-        localStorage.getItem("isAdminLoggedIn") === "true" &&
-        !!getAdminSessionToken() &&
-        ["admin", "superadmin", "super_admin", "administrator"].includes(role)
-    );
+    try {
+        const raw = localStorage.getItem("adminUser") || localStorage.getItem("userData") || "{}";
+        const obj = JSON.parse(raw);
+        role = String(
+            obj.role ||
+            obj.userType ||
+            obj.type ||
+            localStorage.getItem("adminRole") ||
+            ""
+        ).toLowerCase().trim();
+    } catch (_) {
+        role = String(localStorage.getItem("adminRole") || "").toLowerCase().trim();
+    }
+
+    return !!token && loggedIn &&
+        ["admin","superadmin","super_admin","administrator"].includes(role);
 }
 
 async function validateAdminSession() {
     const token = getAdminSessionToken();
     if (!token || !supabaseClient) return false;
 
-    try {
-        const result = await supabaseClient.rpc("admin_list_users", {
-            p_admin_session_token: token
-        });
+    const result = await supabaseClient.rpc("admin_list_users", {
+        p_admin_session_token: token
+    });
 
-        if (result.error) {
-            console.warn("Admin session validation failed:", result.error.message || result.error);
-            return false;
-        }
-
-        return true;
-    } catch (error) {
-        console.warn("Admin session validation error:", error?.message || error);
+    if (result.error) {
+        console.error("Admin session validation failed:", result.error);
         return false;
     }
+
+    return true;
 }
 
 function clearOnlyAdminSession() {
@@ -217,18 +217,41 @@ function clearOnlyAdminSession() {
         "isAdminLoggedIn",
         "admin_session_token",
         "adminUser",
+        "userData",
         "adminEmail",
         "adminPhone",
         "adminName",
         "adminRole"
     ].forEach(key => {
-        try { localStorage.removeItem(key); } catch (_) {}
-        try { sessionStorage.removeItem(key); } catch (_) {}
+        localStorage.removeItem(key);
+        sessionStorage.removeItem(key);
     });
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
     if (!supabaseClient) {
+        window.location.href = "admin-login.html";
+        return;
+    }
+
+    try {
+        if (hasLocalAdminSession()) {
+            if (!(await validateAdminSession())) {
+                clearOnlyAdminSession();
+                window.location.href = "admin-login.html";
+                return;
+            }
+            isAdminView = true;
+        } else {
+            const { data: sessionData, error: sessionError } = await supabaseClient.auth.getSession();
+            if (sessionError || !sessionData?.session) {
+                window.location.href = "admin-login.html";
+                return;
+            }
+            isAdminView = false;
+        }
+    } catch (error) {
+        console.error("Session check failed:", error);
         window.location.href = "admin-login.html";
         return;
     }
@@ -244,43 +267,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     currentUserId = String(currentUserId).trim();
+    if (isAdminView) document.body.classList.add("admin-user-view");
     injectNotificationStyles();
-
-    /*
-     * IMPORTANT FIX:
-     * Admin Login uses SafePass's custom admin_session_token.
-     * It does NOT require supabase.auth.getSession().
-     * The previous guard required a Supabase Auth session and therefore
-     * redirected admin users back to admin-login.html when opening a user.
-     */
-    if (hasLocalAdminSession()) {
-        const validAdmin = await validateAdminSession();
-
-        if (!validAdmin) {
-            clearOnlyAdminSession();
-            window.location.href = "admin-login.html";
-            return;
-        }
-
-        isAdminView = true;
-        document.title = "User Control Panel | Admin View";
-    } else {
-        // Preserve the existing normal Supabase-authenticated flow.
-        try {
-            const { data: sessionData, error: sessionError } =
-                await supabaseClient.auth.getSession();
-
-            if (sessionError || !sessionData?.session) {
-                window.location.href = "admin-login.html";
-                return;
-            }
-        } catch (error) {
-            console.error("Supabase session check failed:", error);
-            window.location.href = "admin-login.html";
-            return;
-        }
-    }
-
     ensureStatusOptions();
     await loadUserDetails();
     setupEventListeners();
@@ -325,33 +313,21 @@ function handleLogout() {
     document.body.appendChild(overlay);
 
     document.getElementById("confirmLogoutYes").addEventListener("click",async () => {
-        if (isAdminView) {
-            const adminToken = getAdminSessionToken();
-
-            try {
-                if (adminToken && supabaseClient) {
-                    const { error } = await supabaseClient.rpc("admin_logout", {
-                        p_session_token: adminToken
-                    });
-                    if (error) console.warn("Admin session revoke warning:", error);
+        try {
+            if (isAdminView) {
+                const token = getAdminSessionToken();
+                if (token && supabaseClient) {
+                    await supabaseClient.rpc("admin_logout", { p_session_token: token });
                 }
-            } catch (e) {
-                console.warn("Admin session revoke warning:", e);
+                clearOnlyAdminSession();
+            } else {
+                if (supabaseClient) await supabaseClient.auth.signOut();
+                ["admin_session","current_admin","isLoggedIn","user_session"].forEach(key => localStorage.removeItem(key));
+                sessionStorage.clear();
             }
-
-            // Never sign out shared Supabase Auth from the custom Admin session.
-            clearOnlyAdminSession();
-
-            overlay.remove();
-            showFlashPopup("Admin logged out successfully!","success");
-            setTimeout(() => window.location.href="admin-login.html",1200);
-            return;
+        } catch (e) {
+            console.warn("Logout warning:", e);
         }
-
-        // Preserve the previous normal-user logout behavior.
-        try { if (supabaseClient) await supabaseClient.auth.signOut(); } catch (e) { console.warn("Auth sign-out warning:", e); }
-        ["admin_session","current_admin","isLoggedIn","user_session"].forEach(key => localStorage.removeItem(key));
-        sessionStorage.clear();
         overlay.remove();
         showFlashPopup("Logged out successfully!","success");
         setTimeout(() => window.location.href="admin-login.html",1200);
@@ -363,21 +339,19 @@ async function loadUserDetails(isSilent=false) {
     try {
         let allUsers = [];
 
-        if (isAdminView && supabaseClient) {
-            const adminToken = getAdminSessionToken();
-            const { data, error } = await supabaseClient.rpc("admin_list_users", {
-                p_admin_session_token: adminToken
-            });
-
-            if (error) throw error;
-
-            if (Array.isArray(data)) allUsers = data;
-            else if (Array.isArray(data?.users)) allUsers = data.users;
-            else if (Array.isArray(data?.data)) allUsers = data.data;
-        } else if (supabaseClient) {
-            const {data,error} = await supabaseClient.from("users").select("*");
-            if (!error && data) allUsers = data;
-            else if (error) console.error("Supabase users fetch error:",error);
+        if (supabaseClient) {
+            if (isAdminView) {
+                const token = getAdminSessionToken();
+                const result = await supabaseClient.rpc("admin_list_users", {
+                    p_admin_session_token: token
+                });
+                if (result.error) throw result.error;
+                allUsers = Array.isArray(result.data) ? result.data : [];
+            } else {
+                const {data,error} = await supabaseClient.from("users").select("*");
+                if (!error && data) allUsers = data;
+                else if (error) console.error("Supabase users fetch error:",error);
+            }
         }
 
         if (!allUsers.length) {
@@ -712,7 +686,7 @@ function openDashboardStyleEditModal(recordId,records) {
 
             if(error) throw error;
             if(!Array.isArray(updatedRows) || updatedRows.length===0){
-                throw new Error("No credential row was updated. Check the record ID and Supabase RLS policy.");
+                throw new Error(isAdminView ? "Vault record update was blocked by Supabase RLS. The admin status control uses a secure admin RPC, but credentials UPDATE permission is not enabled for this session." : "No credential row was updated. Check the record ID and Supabase RLS policy.");
             }
 
             const updatedRecord=updatedRows[0];
@@ -747,7 +721,7 @@ async function deleteVaultRecord(recordId){
 
         const {data,error}=await supabaseClient.from("credentials").delete().eq("id",recordId).select("id");
         if(error) throw error;
-        if(!Array.isArray(data) || data.length===0) throw new Error("No record was deleted. Check Supabase RLS/admin permission.");
+        if(!Array.isArray(data) || data.length===0) throw new Error(isAdminView ? "Vault record delete was blocked by Supabase RLS. The admin status control uses a secure admin RPC, but credentials DELETE permission is not enabled for this session." : "No record was deleted. Check Supabase RLS/admin permission.");
 
         userData.vaultRecords=userData.vaultRecords.filter(r=>String(r.id ?? r._id)!==String(recordId));
         localStorage.setItem("vault_records",JSON.stringify(userData.vaultRecords));
@@ -802,34 +776,35 @@ async function updateUserStatus(){
     try{
         if(!supabaseClient)throw new Error("Supabase client is not initialized.");
 
-        if (isAdminView) {
-            const adminToken = getAdminSessionToken();
-            if (!adminToken) throw new Error("Admin session token is missing.");
+        let updatedStatus = newStatus;
 
-            const { error } = await supabaseClient.rpc("admin_update_user_status", {
-                p_session_token: adminToken,
+        if (isAdminView) {
+            const token = getAdminSessionToken();
+            if (!token) throw new Error("Admin session expired. Please login again.");
+
+            const result = await supabaseClient.rpc("admin_set_user_status", {
+                p_admin_session_token: token,
                 p_user_id: targetUserId,
                 p_status: newStatus
             });
-            if (error) throw error;
 
-            userData.status = newStatus;
-            statusElem.value = newStatus;
+            if (result.error) throw result.error;
+
+            const row = Array.isArray(result.data) ? result.data[0] : result.data;
+            updatedStatus = normalizeUserStatus(row?.status || newStatus);
         } else {
             const {data,error}=await supabaseClient.from("users").update({status:newStatus}).eq("userId",targetUserId).select("userId,status");
             if(error)throw error;
             if(!data||data.length===0)throw new Error(`No user was updated for userId=${targetUserId}. Check userId and Supabase RLS/admin permission.`);
-            userData.status=normalizeUserStatus(data[0].status);
-            statusElem.value=userData.status;
+            updatedStatus = normalizeUserStatus(data[0].status);
         }
 
+        userData.status=updatedStatus; statusElem.value=userData.status;
         localStorage.setItem("app_users_db",JSON.stringify([userData]));
         showFlashPopup(`User ${targetUserId} status changed to ${getStatusLabel(userData.status)}.`,"success");
         await loadUserDetails(true);
     }catch(err){
-        console.error("Failed to update user status:",err);
-        userData.status=oldStatus;
-        statusElem.value=oldStatus;
+        console.error("Failed to update user status:",err); userData.status=oldStatus; statusElem.value=oldStatus;
         showFlashPopup(`Failed to update user status: ${err?.message||err}`,"error");
     }
 }
@@ -854,28 +829,26 @@ async function deleteAccount(){
         if(!supabaseClient)throw new Error("Supabase client is not initialized.");
 
         if (isAdminView) {
-            const adminToken = getAdminSessionToken();
-            if (!adminToken) throw new Error("Admin session token is missing.");
+            const token = getAdminSessionToken();
+            if (!token) throw new Error("Admin session expired. Please login again.");
 
-            const { error } = await supabaseClient.rpc("admin_delete_user", {
-                p_session_token: adminToken,
-                p_user_id: currentUserId
+            const result = await supabaseClient.rpc("admin_delete_user", {
+                p_admin_session_token: token,
+                p_user_id: String(currentUserId)
             });
-            if (error) throw error;
+
+            if (result.error) throw result.error;
         } else {
             const {data:userDeleted,error:userError}=await supabaseClient.from("users").delete().eq("userId",currentUserId).select("userId");
             if(userError)throw userError;
-            if(!userDeleted||userDeleted.length===0)throw new Error("No user account was deleted. Check userId and Supabase RLS/admin permission.");
+            if(!userDeleted||userDeleted.length===0)throw new Error("No user account was deleted. Check Supabase RLS/admin permission.");
             const {error:credError}=await supabaseClient.from("credentials").delete().eq("userid",currentUserId);
             if(credError)console.warn("Credential deletion warning:",credError);
         }
 
         showFlashPopup("Account deleted successfully!","success");
         setTimeout(()=>window.location.href="admin.html",1200);
-    }catch(err){
-        console.error("Failed to delete account:",err);
-        showFlashPopup(`Failed to delete account: ${err?.message||err}`,"error");
-    }
+    }catch(err){console.error("Failed to delete account:",err);showFlashPopup(`Failed to delete account: ${err?.message||err}`,"error");}
 }
 
 function initSupabaseRealtime(){
