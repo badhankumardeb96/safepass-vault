@@ -448,12 +448,38 @@ document.addEventListener("DOMContentLoaded", () => {
                The login page stores the session using the same custom
                storageKey: `safepass-vault-auth`.
             */
-            const { data: sessionData, error: sessionError } =
+            let { data: sessionData, error: sessionError } =
                 await supabaseClient.auth.getSession();
 
             if (sessionError) {
-                console.error("Supabase session check failed:", sessionError);
-                return false;
+                console.warn("Supabase session check failed; attempting refresh:", sessionError);
+            }
+
+            /*
+               Android WebView can restore the persisted Supabase session with
+               an expired access token while the refresh token is still valid.
+               Refresh once before declaring the login invalid. This prevents
+               the dashboard from being redirected to index.html immediately
+               after a successful mobile login.
+            */
+            if (!sessionData?.session?.user) {
+                try {
+                    const refreshed = await supabaseClient.auth.refreshSession();
+                    if (!refreshed.error && refreshed.data?.session?.user) {
+                        sessionData = refreshed.data;
+                        sessionError = null;
+                    } else {
+                        // Android WebView can finish restoring storage slightly
+                        // after the first getSession() call. Read it once more.
+                        const reread = await supabaseClient.auth.getSession();
+                        if (!reread.error && reread.data?.session?.user) {
+                            sessionData = reread.data;
+                            sessionError = null;
+                        }
+                    }
+                } catch (refreshError) {
+                    console.warn("Supabase Auth refresh failed:", refreshError);
+                }
             }
 
             if (!sessionData?.session?.user) {

@@ -446,13 +446,9 @@
             const role = String(getField(user, "role", "userType", "type") || "user").toLowerCase();
             const status = String(getField(user, "status") || "active").toLowerCase();
 
-            const roleBadge = role === "admin" || role === "administrator" || role === "superadmin" || role === "super_admin"
-                ? '<span style="display:inline-block;margin-top:4px;padding:2px 7px;border-radius:999px;background:#dcfce7;color:#166534;font-size:11px;font-weight:700;">ADMIN</span>'
-                : `<span style="display:inline-block;margin-top:4px;padding:2px 7px;border-radius:999px;background:#e2e8f0;color:#334155;font-size:11px;font-weight:700;">${escapeHtml(role.toUpperCase())}</span>`;
-
             row.innerHTML = `
                 <td><a href="user.html?id=${encodeURIComponent(userId)}" style="color:#4f46e5;font-weight:bold;">${escapeHtml(userId)}</a></td>
-                <td><strong>${escapeHtml(name)}</strong><br><small>NID: ${escapeHtml(nid || "N/A")}</small><br>${roleBadge}</td>
+                <td><strong>${escapeHtml(name)}</strong><br><small>NID: ${escapeHtml(nid || "N/A")}</small><br><small>Role: ${escapeHtml(role)}</small></td>
                 <td>${escapeHtml(phone || "N/A")}<br><small>${escapeHtml(email || "N/A")}</small></td>
                 <td>
                     <select class="status-select" data-userid="${escapeHtml(userId)}">
@@ -492,7 +488,7 @@
 
             if (adminSessionToken) {
                 ({ data, error } = await supabaseClient.rpc("admin_list_users", {
-                    p_admin_session_token: adminSessionToken
+                    p_session_token: adminSessionToken
                 }));
             } else if (registrationToken) {
                 ({ data, error } = await supabaseClient.rpc("admin_registration_list_users", {
@@ -517,8 +513,8 @@
             return;
         }
         try {
-            const { error } = await supabaseClient.rpc("admin_set_user_status", {
-                p_admin_session_token: token,
+            const { error } = await supabaseClient.rpc("admin_update_user_status", {
+                p_session_token: token,
                 p_user_id: userId,
                 p_status: status
             });
@@ -539,7 +535,7 @@
         if (!window.confirm(`Are you sure you want to delete user ${userId}? This action cannot be undone.`)) return;
         try {
             const { error } = await supabaseClient.rpc("admin_delete_user", {
-                p_admin_session_token: token,
+                p_session_token: token,
                 p_user_id: userId
             });
             if (error) throw error;
@@ -572,11 +568,26 @@
             }
         }
         Object.values(SESSION_KEYS).forEach(key => sessionStorage.removeItem(key));
-        localStorage.removeItem(SESSION_KEYS.adminSessionToken);
-        ["userData", "adminUser", "adminEmail", "adminPhone", "adminName", "adminRole"].forEach(key => {
+
+        // Clear only the custom Admin/registration session. Do not use
+        // localStorage.clear(), because the same WebView may contain the
+        // normal SafePass user/vault session.
+        [
+            "isAdminLoggedIn",
+            "admin_session_token",
+            "adminUser",
+            "adminEmail",
+            "adminPhone",
+            "adminName",
+            "adminRole"
+        ].forEach(key => {
             sessionStorage.removeItem(key);
             localStorage.removeItem(key);
         });
+
+        // Keep normal user login state intact on the registration-management
+        // page. The page itself will require an Admin/registration token when
+        // protected operations are attempted.
         window.location.href = "admin-login.html";
     }
 

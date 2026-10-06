@@ -14,36 +14,36 @@
     <!-- Admin Security Guard -->
     <script>
         document.addEventListener("DOMContentLoaded", () => {
-            let loggedInUser = null;
+            const isAdminLoggedIn = localStorage.getItem("isAdminLoggedIn") === "true";
+            let adminUser = null;
+
             try {
-                const userRaw = localStorage.getItem('current_user') || localStorage.getItem('loggedInUser') || localStorage.getItem('user') || localStorage.getItem('userData') || sessionStorage.getItem('current_user');
-                if (userRaw) {
-                    loggedInUser = JSON.parse(userRaw);
-                }
+                adminUser = JSON.parse(
+                    localStorage.getItem("adminUser") ||
+                    localStorage.getItem("userData") ||
+                    "null"
+                );
             } catch (e) {
-                console.error("Error parsing user session:", e);
+                console.error("Error parsing admin session:", e);
             }
 
-            const isAdminLoggedIn = localStorage.getItem('isAdminLoggedIn') === 'true';
-            const hasSession = loggedInUser !== null || isAdminLoggedIn;
+            const role = String(
+                adminUser?.role ||
+                localStorage.getItem("adminRole") ||
+                ""
+            ).toLowerCase().trim();
 
-            if (!hasSession) {
-                alert("Access Denied! Please log in first.");
-                window.location.href = "admin-login.html";
+            const hasAdminSession =
+                isAdminLoggedIn &&
+                !!localStorage.getItem("admin_session_token") &&
+                ["admin", "superadmin", "super_admin", "administrator"].includes(role);
+
+            if (!hasAdminSession) {
+                alert("Access Denied! Please log in as an Admin first.");
+                window.location.replace("admin-login.html");
             }
         });
     </script>
-
-<style id="safe-pass-live-status">
-.live-status{display:inline-flex;align-items:center;gap:6px;margin-left:10px;padding:4px 7px;border-radius:999px;font-size:10px;font-weight:700;line-height:1;vertical-align:middle}
-.live-status-dot{width:7px;height:7px;border-radius:50%;display:inline-block}
-.live-status.online{color:#15803d;background:rgba(34,197,94,.10)}
-.live-status.online .live-status-dot{background:#22c55e;box-shadow:0 0 7px rgba(34,197,94,.9);animation:safeGreenBlink 1.6s ease-in-out infinite}
-.live-status.offline{color:#dc2626;background:rgba(239,68,68,.10)}
-.live-status.offline .live-status-dot{background:#ef4444;box-shadow:0 0 8px rgba(239,68,68,.95);animation:safeRedBlink .18s linear infinite}
-@keyframes safeGreenBlink{0%,100%{opacity:1}50%{opacity:.28}}
-@keyframes safeRedBlink{0%,49%{opacity:1}50%,100%{opacity:.05}}
-</style>
 </head>
 <body>
 
@@ -52,7 +52,6 @@
         <div class="logo-container" id="adminLogoBtn">
             <i class="fa-solid fa-user-shield logo-icon"></i>
             <span class="logo-text">Admin Control Center</span>
-            <span id="connectionStatus" class="live-status online" aria-live="polite"><span class="live-status-dot"></span><span id="connectionStatusText">LIVE</span></span>
         </div>
         <div class="admin-profile">
             <i class="fa-solid fa-circle-user profile-icon"></i>
@@ -202,18 +201,6 @@
     <div id="toastContainer" class="toast-container"></div>
 
     <!-- Admin JavaScript Logic -->
-    
-<script id="safe-pass-network-indicator">
-(() => {
-  const setStatus = (online) => {
-    const el=document.getElementById('connectionStatus'); const txt=document.getElementById('connectionStatusText');
-    if(!el||!txt)return; el.classList.toggle('online',online); el.classList.toggle('offline',!online); txt.textContent=online?'LIVE':'OFFLINE';
-  };
-  window.addEventListener('online',()=>setStatus(true));
-  window.addEventListener('offline',()=>setStatus(false));
-  setStatus(navigator.onLine);
-})();
-</script>
-<script src="admin.js"></script>
+    <script src="admin.js"></script>
 </body>
 </html>

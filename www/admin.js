@@ -103,6 +103,7 @@ document.addEventListener("DOMContentLoaded", () => {
     fetchData();
     initSupabaseRealtime();
     setupEventListeners();
+    initAdminUserNavigationGuard();
     injectNotificationStyles();
     initConnectionStatus();
     initSupabaseAuthStateListener();
@@ -214,8 +215,24 @@ function checkAdminSession() {
             alert(
                 "Access Denied! You are a registered user, not an admin. Regular users cannot access the Admin Panel."
             );
-            localStorage.clear();
+
+            // Do NOT wipe the entire localStorage. The normal user/dashboard
+            // session may be stored there as well. Remove only Admin state.
+            [
+                'isAdminLoggedIn',
+                'admin_session_token',
+                'adminUser',
+                'adminEmail',
+                'adminPhone',
+                'adminName',
+                'adminRole'
+            ].forEach(key => {
+                localStorage.removeItem(key);
+                sessionStorage.removeItem(key);
+            });
+
             window.location.href = 'admin-login.html';
+            return;
         }
     } catch (e) {
         console.warn("Session check warning:", e);
@@ -255,6 +272,23 @@ async function fetchAdminProfileName() {
 /* ===========================================================================
    EVENT LISTENERS
    ========================================================================== */
+
+function initAdminUserNavigationGuard() {
+    if (window.__SAFE_PASS_ADMIN_USER_NAV_GUARD__) return;
+    window.__SAFE_PASS_ADMIN_USER_NAV_GUARD__ = true;
+
+    document.addEventListener("click", (event) => {
+        const link = event.target.closest?.('a[data-safe-pass-admin-user-link="1"]');
+        if (!link) return;
+
+        // Do not let unrelated delegated handlers treat this as an admin logout.
+        // Navigation itself is intentionally left to the browser.
+        if (localStorage.getItem("isAdminLoggedIn") === "true" &&
+            localStorage.getItem("admin_session_token")) {
+            event.stopPropagation();
+        }
+    }, true);
+}
 
 function setupEventListeners() {
     const searchInput = document.getElementById("adminSearchInput");
@@ -392,12 +426,16 @@ async function fetchData() {
     try {
         const rawToken = getAdminSessionToken();
 
-        const uuidPattern =
-            /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-        if (!uuidPattern.test(rawToken)) {
+        /*
+         * IMPORTANT: admin_session_token is an opaque server-issued bearer
+         * token. It is intentionally treated as TEXT here. The database RPC
+         * performs the real validation through admin_session_is_valid().
+         * Do NOT require a UUID format in the browser: older/newer SafePass
+         * deployments may use different opaque token formats.
+         */
+        if (!rawToken) {
             throw new Error(
-                "Valid admin session token not found. Please logout and login again."
+                "Admin session token is missing. Please logout and login again."
             );
         }
 
@@ -746,10 +784,10 @@ function renderTable(tableBodyId, noMsgId, data, isAdminTable = false) {
         rowsHtml += `
             <tr>
                 <td>
-                    <a href="user.html?id=${encodeURIComponent(activeUserId)}" style="color:#2563eb;font-weight:bold;text-decoration:none;">${safeId}</a>
+                    <a href="user.html?id=${encodeURIComponent(activeUserId)}" data-safe-pass-admin-user-link="1" style="color:#2563eb;font-weight:bold;text-decoration:none;">${safeId}</a>
                 </td>
                 <td>
-                    <a href="user.html?id=${encodeURIComponent(activeUserId)}" style="color:#1e293b;font-weight:600;text-decoration:none;">${safeName}</a>
+                    <a href="user.html?id=${encodeURIComponent(activeUserId)}" data-safe-pass-admin-user-link="1" style="color:#1e293b;font-weight:600;text-decoration:none;">${safeName}</a>
                 </td>
                 <td>${emailPhoneDisplay}</td>
                 <td>
@@ -1006,11 +1044,37 @@ async function executePermanentDelete() {
    ========================================================================== */
 
 async function logoutAdmin() {
-    try {
-        if (supabaseClient) await supabaseClient.auth.signOut();
-    } catch (_) {}
+    /*
+     * Admin authentication is a custom server-side session. Do not call
+     * Supabase Auth signOut() here because that can terminate the normal
+     * user/vault Auth session in the same WebView.
+     */
+    const token = getAdminSessionToken();
 
-    localStorage.clear();
+    if (token && supabaseClient) {
+        try {
+            await supabaseClient.rpc("admin_logout", {
+                p_session_token: token
+            });
+        } catch (error) {
+            console.warn("Admin session revoke warning:", error);
+        }
+    }
+
+    [
+        'isAdminLoggedIn',
+        'admin_session_token',
+        'adminUser',
+        'userData',
+        'adminEmail',
+        'adminPhone',
+        'adminName',
+        'adminRole'
+    ].forEach(key => {
+        localStorage.removeItem(key);
+        sessionStorage.removeItem(key);
+    });
+
     window.location.href = 'admin-login.html';
 }
 
